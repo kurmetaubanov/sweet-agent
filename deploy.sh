@@ -35,7 +35,12 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 mkdir -p "$OUT_DIR"
-chmod 700 "$OUT_DIR"
+# 711, and not 700. Docker-filter runs as nobody and checks every bind source
+# of a create request; with 700 it cannot enter this directory at all and the
+# whole stack stops at "bind source not visible to filter". 711 lets it traverse
+# to the named file, while the listing of the directory stays closed: a stranger
+# who does not already know the file name learns nothing.
+chmod 711 "$OUT_DIR"
 
 missing=""
 
