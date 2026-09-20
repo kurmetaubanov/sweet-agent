@@ -1,0 +1,311 @@
+# The sweet stack. Only brain and three service containers come up — the hands and the
+# embedder are created by brain itself, through docker-filter, and it tidies them up itself.
+#
+#   docker build -t sweet-brain:dev .
+#   docker build -t sweet-hand:dev hand/
+#   docker build -f embedder/Dockerfile -t sweet-embedder:dev .
+#   docker compose up -d
+#   docker attach sweet-brain
+#
+# Keys and tokens are taken from .env (it is in .gitignore).
+
+services:
+  brain:
+    build: .
+    image: sweet-brain:dev
+    container_name: sweet-brain
+    hostname: sweet-brain
+    labels:
+      # A service container of the stack. Docker is given to the hand, and in /run/secrets of brain
+      # lie the real model key and telegram token — by this label
+      # docker-filter closes `docker cp` inward/outward and the removal of the container.
+      # It is exactly archive that makes the mounting unreachable: export and commit
+      # do not include the contents of mountings, and `docker cp` is forbidden.
+      sweet.protected: "true"
+    stdin_open: true
+    tty: true
+    environment:
+      # The model key and the telegram token used to lie here. The argument was "the code of
+      # the model is not executed in brain, there is no one to steal" — but the threat is not from inside
+      # brain, but from outside: the hand has the docker API, and the environment of any container
+      # it gives away through several routes. Now both secrets are in secrets.
+      # Outward brain still goes directly, past egress: Finch/Mint
+      # do not read the HTTP_PROXY variable in principle.
+      # ANTHROPIC_API_KEY and TELEGRAM_BOT_TOKEN are NO LONGER here: the environment
+      # of a container is read through the docker API (inspect, top), and it is given to the hand.
+      # Both come as files into /run/secrets, see secrets at the bottom of the file.
+      # Whose messages the bot accepts is NO LONGER here, and for the same reason
+      # as the key with the token: the list of allowed ones is also a secret, while the environment
+      # of a container is read out by the hand through the docker API. It comes as a file,
+      # see secrets at the bottom of the file.
+      # Not a key, but a mask: brain passes it to the hand. The real token lives only
+      # in the container of the egress filter and is substituted on the way out, on github.com.
+      GITHUB_API_KEY_MASK: ${SWEET_GITHUB_API_KEY_MASK:-}
+      # Also a mask and for the same reason: brain passes it to the hand, the real key
+      # is substituted by the filter on api.serpbase.dev.
+      SERPBASE_API_KEY_MASK: ${SWEET_SERPBASE_API_KEY_MASK:-}
+    secrets:
+      - anthropic_api_key
+      - telegram_bot_token
+      - tg_allowed_user_id
+    volumes:
+      # The memory of conversations (priv/recall) and the inventory of sessions (priv/sessions) —
+      # two CubDB stores. It is exactly a bind into the folder of the
+      # project, and not a named volume — that is how this works today, and substituting the
+      # store would mean that the agent starts with a clean memory.
+      - type: bind
+        source: ${SWEET_PRIV_HOST_DIR:-/home/maha/projects/sweet-agent/priv}
+        target: /app/priv
+      # The same working folder that the hand sees. It is needed for the exchange of files:
+      # the hand puts the result into /workspace/outbox, brain sends it from there;
+      # what is sent into the chat brain puts into /workspace/inbox, and the hand reads it.
+      - type: bind
+        source: ${SWEET_WORKSPACE_HOST_DIR:-/home/maha/projects/kurmet-agent-space}
+        target: /workspace
+      # Skills. brain reads the descriptions and searches by them; they are edited only
+      # by the curator, therefore here too only reading.
+      - type: bind
+        source: ${SWEET_SKILLS_HOST_DIR:-/home/maha/projects/sweet-agent/skills}
+        target: /skills
+        read_only: true
+      # The docker.sock is NO LONGER here. It gave brain full control over the
+      # host; now docker is accessible only through the filter, over TCP.
+    networks:
+      - sweet_hands     # here brain meets the hands and the embedder
+      - sweet_ctl       # from here, and only from here, they go to docker-filter
+      - sweet_world     # and here — outward, to the model and to Telegram
+    depends_on:
+      - docker-filter
+      - egress-filter
+    # The last link of "let it crash": the node.
+    #
+    # Inside the tree everything falls and comes up by itself, but when `Sweet.Supervisor`
+    # exhausts its stock of restarts, there is no one left to save the system — except
+    # docker. In pair with the release (prod, `start_permanent: true`) that is what works:
+    # the root supervisor died → the VM went out → the container exited → docker brought it
+    # up again. Without this line the node simply stayed lying.
+    #
+    # unless-stopped, and not always: a stack stopped by hand must not
+    # come up by itself after a reboot of the host.
+    restart: unless-stopped
+
+  hand:
+    # The image of the hand. The service is needed ONLY for the build: `docker compose up -d
+    # --build` builds the images of all the services of the project, while the hand has no
+    # build: key otherwise at all — the README suggested a separate command `docker build -t
+    # sweet-hand:dev hand/`.
+    #
+    # scale: 0 — compose does not bring up a container from this image. The hand is created
+    # by brain itself through docker-filter, with its own label {"sweet": "hand"} and without the labels of
+    # compose; an extra instance under the same name would only get in the way (the name
+    # of the container of the hand is set and constant — by the session identifier).
+    #
+    # The tag must coincide with hand_image in config/config.exs: brain always takes
+    # sweet-hand:dev and after a rebuild of the image does NOT recreate the hand itself. A fresh
+    # image is picked up at the next creation of a hand, that is, after
+    # a restart of brain.
+    #
+    # networks — so that compose does not start its own network for this service
+    # <project>_default: the network for it must be named explicitly.
+    build:
+      context: ./hand
+    image: sweet-hand:dev
+    scale: 0
+    networks:
+      - sweet_hands
+
+  egress-filter:
+    # Substitution of credentials: the hand sends a MASK, outward goes
+    # the real token. The real value exists only here.
+    build:
+      context: ./egress-filter
+    image: sweet-egress:dev
+    container_name: sweet-egress
+    restart: unless-stopped
+    labels:
+      # The real tokens live here, but NOT in the environment: they come as
+      # secrets files into /run/secrets (see secrets below). The protection is needed so that the
+      # hand does not remove the container together with the masking and does not read out the files
+      # through `docker cp`.
+      sweet.protected: "true"
+
+    environment:
+      # GitHub: git over HTTPS hides the token in Authorization: Basic, the addon
+      # parses such a header too. The paths of git depend on the repository,
+      # therefore they are given as suffixes.
+      GITHUB_API_KEY_MASK: ${SWEET_GITHUB_API_KEY_MASK:-}
+      # GITHUB_API_KEY_REAL is NO LONGER here — see secrets at the bottom of the file.
+      GITHUB_INJECT_HOSTS: ${GITHUB_INJECT_HOSTS:-github.com,api.github.com}
+      GITHUB_INJECT_PATHS: ${GITHUB_INJECT_PATHS:-}
+      GITHUB_INJECT_PATH_SUFFIXES: ${GITHUB_INJECT_PATH_SUFFIXES:-/info/refs,/git-upload-pack,/git-receive-pack,/}
+      # SerpBase: the web search of the websearch skill. The host and the path are narrow, so
+      # suffixes are not needed — the key goes only to api.serpbase.dev/google/search.
+      SERPBASE_API_KEY_MASK: ${SWEET_SERPBASE_API_KEY_MASK:-}
+      # SERPBASE_API_KEY_REAL is NO LONGER here — see secrets at the bottom of the file.
+      SERPBASE_INJECT_HOSTS: ${SERPBASE_INJECT_HOSTS:-api.serpbase.dev}
+      SERPBASE_INJECT_PATHS: ${SERPBASE_INJECT_PATHS:-/google/search}
+    secrets:
+      - github_api_key
+      - serpbase_api_key
+    volumes:
+      # The CA certificate is generated here; the hand reads it from here too, :ro.
+      #
+      # A folder of the host, and NOT a named volume — and this is forced. Compose puts any
+      # volume into the Binds column as an entry without a leading slash (`sweet_ca:/certs`),
+      # in whatever form it was described in the file; neither the long syntax nor the
+      # options change this. Docker-filter expects a host path in Binds and
+      # rejects such an entry. An ordinary folder passes — it is the path.
+      - type: bind
+        source: ${SWEET_CA_HOST_DIR:-/home/maha/projects/sweet-agent/certs}
+        target: /certs
+    networks:
+      - sweet_hands     # from here the filter is visible to the hand
+      - sweet_world     # and from here the filter goes into the internet
+
+  docker-filter:
+    # A copy from prime-agent, file for file. It looks at the EXPANDED body of a request to
+    # create a container, therefore it cannot be bypassed by assembling a string.
+    build:
+      context: ./docker-filter
+    image: sweet-docker-filter:dev
+    container_name: sweet-docker-filter
+    restart: unless-stopped
+    labels:
+      # The filter itself: to remove it would mean to lift all the prohibitions at once.
+      sweet.protected: "true"
+    environment:
+      # UPSTREAM_URL and LISTEN_PORT are no longer needed: the filter talks to the socket of
+      # the daemon directly (see volumes) and listens on the standard 2375. The intermediate
+      # tecnativa is gone — together with it the TCP port of the daemon also disappeared, which
+      # twice turned out to be a door past the filter.
+      # FORBIDDEN networks. The list is black, and not white, and this is deliberate: the agent
+      # helps to develop, it brings up its own stands and links them with its own
+      # networks. A white list broke this — creating a network is possible, putting a
+      # container into it is not.
+      #
+      # We forbid exactly two: sweet_ctl (the management brain ↔ filter) and sweet_world
+      # (the egress leg into the internet; having got in there, the hand would go outward past the
+      # substitution of keys). Everything else, including its own networks, is allowed.
+      #
+      # Networks with docker.sock are closed separately and dynamically (network_has_socket),
+      # therefore there is no need to enumerate them in this list.
+      DOCKER_FILTER_DENIED_NETWORKS: ${SWEET_DOCKER_FILTER_DENIED_NETWORKS:-sweet_ctl,sweet_world}
+      # Which folders of the host are allowed to be mounted into created containers.
+      # Empty = not one. The working folder of the hand is needed, and it is also /workspace.
+      DOCKER_FILTER_ALLOWED_BINDS: ${SWEET_DOCKER_FILTER_ALLOWED_BINDS:-}
+    # The filter works under nobody (USER in its Dockerfile) — this is deliberate: it is
+    # the most shelled component of the stack. But the socket of the daemon on the host belongs to
+    # root:docker with mode 0660, and an unprivileged process will not open it:
+    # the first rollout gave exactly this — the filter is alive, while any request upward is 502.
+    # Therefore access is granted by a GROUP, and not by switching to root: exactly as many rights
+    # as are needed to read the socket.
+    #
+    # The GID is taken from the host: stat -c %g /var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
+    volumes:
+      # The socket of the daemon. Now it is seen by the filter, and only by it: the daemon has no
+      # TCP port at all, therefore the daemon cannot be reached past the filter from anywhere.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # A read-only view of the same folders that are allowed in Binds. It is needed in order to
+      # expand symlinks: the whitelist compared a string, while docker expands
+      # the link on the host — a symlink from the working folder to the secrets directory passed
+      # the check and was really mounted. Only one who sees the same file system
+      # can expand.
+      - type: bind
+        source: ${SWEET_WORKSPACE_HOST_DIR:-/home/maha/projects/kurmet-agent-space}
+        target: /home/maha/projects/kurmet-agent-space
+        read_only: true
+      - type: bind
+        source: ${SWEET_SKILLS_HOST_DIR:-/home/maha/projects/sweet-agent/skills}
+        target: /home/maha/projects/sweet-agent/skills
+        read_only: true
+      # The CA of the egress filter: the hand mounts it for itself, so the filter must
+      # SEE this path. It was forgotten in the first edition — and the hand stopped starting
+      # with "bind source not visible to filter". The rule is simple: in the filter
+      # EVERY path from DOCKER_FILTER_ALLOWED_BINDS must be visible.
+      - type: bind
+        source: ${SWEET_CA_HOST_DIR:-/home/maha/projects/sweet-agent/certs}
+        target: /home/maha/projects/sweet-agent/certs
+        read_only: true
+    networks:
+      - sweet_ctl       # brain goes here
+      - sweet_hands     # and here — the hand: docker is given to the code of the model deliberately
+      # The sweet_proxy network no longer exists, nor does tecnativa itself: the filter is the only one
+      # that talks to the daemon, and it does so through the unix socket.
+
+networks:
+  # The name deliberately does not coincide with the networks of previous launches: the project was then called
+  # kea, and its networks (kea_hands, kea_ctl, kea_world) still lie on the host. Docker
+  # does not re-apply parameters to an existing network — it silently takes it as it is,
+  # therefore a coincidence of names would reduce the isolation to nothing, and it would be possible to notice this
+  # only by hand.
+  sweet_hands:
+    name: sweet_hands
+    driver: bridge
+    # The hand has no route outward at all. The only door is egress-filter,
+    # which stands here with one leg and in the internet with the other. Therefore removing
+    # HTTP_PROXY by the code of the model gives nothing: there is nowhere to go past the filter.
+    # A reservation: with docker the hand can create ITS OWN container in sweet_world and
+    # go into the internet past egress. It has no keys (the hand has masks), so
+    # this is not a leak, but merely unfiltered access.
+    internal: true
+  sweet_ctl:
+    name: sweet_ctl
+    driver: bridge
+    # The network brain ↔ docker-filter. Formerly it kept the hand away from docker;
+    # now docker is given to the hand too (the filter stands with its second leg in sweet_hands), and all
+    # the protection rests on the filter itself: the label sweet.protected closes the service
+    # containers, exec is forbidden, create is inspected by the body. The network remains
+    # separate so that brain has a path to the filter that does not depend on the network of the hand.
+    internal: true
+  sweet_world:
+    name: sweet_world
+    driver: bridge
+
+volumes:
+  # Weights of the embedder model: 470 MB, otherwise they are downloaded at every start.
+  # The volume is created by brain at the first launch of the embedder, here it is only declared.
+  sweet_models:
+    external: true
+    name: sweet_models
+
+secrets:
+  # The real keys — as files on the host, each in its own. They do not get into the environment of the
+  # containers at all, therefore inspect and `docker top` do not give them away.
+  #
+  # The source is exactly file:, and NOT environment:. The difference is not cosmetic, it is
+  # checked by measurement. With the source environment: compose COPIES the value into the
+  # file system of the container — and then `docker export sweet-egress | tar -xO
+  # run/secrets/github_api_key` gives the key as a whole, all 40 bytes. With file:
+  # compose mounts the file, while neither export nor commit includes mountings in the layers
+  # — the same measurement gives 0 bytes. One reading route remains,
+  # `docker cp` (archive), and it is forbidden for sweet.protected in docker-filter.
+  #
+  # The files are generated by ./deploy.sh from .env — .env remains the only place
+  # where the keys are edited by hand. The secrets/ directory itself does not get into git.
+  #
+  # IMPORTANT: the secrets/ directory must NOT get into SWEET_DOCKER_FILTER_ALLOWED_BINDS.
+  # Otherwise the hand will mount it with its own container and read it in the ordinary way, through an
+  # allowed create — and this whole construction loses its meaning.
+  # The path is ABSOLUTE and through a variable — as with priv, certs and workspace above, and
+  # for the same reason. Compose expands a relative `./secrets/...` from
+  # ITS OWN working folder, while the bind is executed by the daemon of the host. They coincide only
+  # when compose is launched on the host; from a container (the agent brings up the stack,
+  # a CI runner, any wrapper) the path goes off into a foreign file system, and the daemon
+  # mounts not the file with the key, but an empty folder that it creates itself.
+  # Then brain comes up WITHOUT the model key and without the telegram token — silently, because
+  # the mounting succeeded.
+  github_api_key:
+    file: ${SWEET_SECRETS_HOST_DIR:-/home/maha/projects/sweet-agent/secrets}/github_api_key
+  serpbase_api_key:
+    file: ${SWEET_SECRETS_HOST_DIR:-/home/maha/projects/sweet-agent/secrets}/serpbase_api_key
+  anthropic_api_key:
+    file: ${SWEET_SECRETS_HOST_DIR:-/home/maha/projects/sweet-agent/secrets}/anthropic_api_key
+  telegram_bot_token:
+    file: ${SWEET_SECRETS_HOST_DIR:-/home/maha/projects/sweet-agent/secrets}/telegram_bot_token
+  # Not a key, but also not an open setting: by this number the bot distinguishes the master
+  # from a stranger, and to strangers it executes code in a container. Therefore
+  # to the same place as the other secrets — as a file, and not an environment variable.
+  tg_allowed_user_id:
+    file: ${SWEET_SECRETS_HOST_DIR:-/home/maha/projects/sweet-agent/secrets}/tg_allowed_user_id

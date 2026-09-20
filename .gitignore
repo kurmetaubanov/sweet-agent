@@ -1,0 +1,23 @@
+/_build/
+/deps/
+# Data, and not code: the memory of conversations, the inventory of sessions, the mark of sending.
+# Formerly the source of the embedder lay here too — and silently did not get into
+# the repository. Now priv/ holds only data, the code lives next to its own
+# Dockerfile (embedder/embedder.py).
+/priv/
+*.beam
+*.dets
+erl_crash.dump
+.env
+# The CA of the egress filter. The private key (mitmproxy-ca.pem) lies here too — the one
+# with which the filter signs the substituted certificates. A leak = the possibility
+# to listen to the traffic of the agent. The folder is created by the filter itself at the first launch.
+/certs/
+# The real keys, laid out into files from .env by the deploy.sh script. As
+# files, and not as variables: the hand reads out the environment of a container through the
+# docker API (`docker top` with ps_args=wwaxe), while a mounting it does not.
+/secrets/
+# The Python cache from any folder: docker-filter, scripts, anything. It appears
+# by itself on the import of a module, it has nothing to do with the repository.
+__pycache__/
+*.py[co]
