@@ -208,6 +208,41 @@ defmodule Sweet.SessionTest do
     assert text =~ "session s-1"
   end
 
+  # --- The paragraph about leave for creations, deletions and edits ---
+
+  # The rule stands in the constant core of the prompt and is glued to the reply of the person.
+  # The wording is one for both deliberately: two versions of one rule diverge at the very first
+  # edit of one of them — therefore the literal left the prompt, and the text lives in one place.
+  test "the rule about leave stands in the system prompt once" do
+    rule = Sweet.Harness.Prompt.edits_rule()
+    text = Sweet.Harness.Prompt.system(%{id: "t-any"})
+
+    assert rule =~ "Any creations, deletions and edits"
+    assert text =~ rule
+    # One copy: the prompt carries the rule itself, and not a rule plus the base of it.
+    assert length(String.split(text, rule)) == 2
+  end
+
+  # The rule decides in the place where the task is read: the reply of the person.
+  test "the reply of the person carries the rule last", %{id: id} do
+    [%{"role" => "user", "content" => content}] =
+      Sweet.Harness.Prompt.build(%{id: id}, "what about the volumes?")
+
+    assert String.ends_with?(content, Sweet.Harness.Prompt.edits_rule())
+    # And it stands behind the question, and not before it: the question must not turn
+    # out to be the last thing said under the rule.
+    assert content =~ "what about the volumes?\n\n" <> Sweet.Harness.Prompt.edits_rule()
+  end
+
+  # The rule is appended to the reply in the PROMPT, and not to the record: into the memory goes
+  # the words of the person as they were said. Otherwise the rule would lie down as a paragraph of
+  # its own, get a vector and start coming back in the search — for every conversation.
+  test "the rule does not go into the memory as a paragraph", %{id: id} do
+    Sweet.Harness.Prompt.build(%{id: id}, "what about the volumes?")
+
+    refute Enum.any?(Sweet.Recall.history(id), &(&1.text =~ "only after unambiguous, strict leave"))
+  end
+
   test "the account of a job survives the task that started it", %{session: session, id: id} do
     # This is the check of that very breakage: the job is started in a SEPARATE
     # task — exactly as in `run_tool/3` — and after its death the session must

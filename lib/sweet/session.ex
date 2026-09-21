@@ -130,10 +130,9 @@ defmodule Sweet.Session do
 
   # --- Callbacks ---
 
-  # The paragraph about leave for edits is VERBATIM the same as in the system prompt
-  # (see Sweet.Harness.Prompt.base/0). The wording is one for both deliberately:
-  # two versions of one rule diverge at the very first edit of one of them.
-  @edits_rule "Any edits — only after unambiguous express leave from the human. If, while making edits, it becomes necessary to make new edits for which express leave has not been given, they must not be made without obtaining express leave from the human. Do not do a git commit without explicit express leave from the human. Do not do a git push without explicit express leave from the human. Do not build containers without unambiguous express leave from the human. Do not run containers without unambiguous express leave from the human."
+  # The paragraph about leave for edits is not written here: it comes from `Sweet.Harness.Prompt`
+  # (see `edits_rule/0`). One copy of the rule for the system prompt, for the reply of the person
+  # and for the result of a tool — two versions of one rule diverge at the very first edit of one of them.
 
   @impl true
   def init(opts) do
@@ -1160,8 +1159,9 @@ defmodule Sweet.Session do
   defp with_reminder(text, turns) do
     case Application.fetch_env!(:sweet, :reminder_edits) do
       :off -> text
-      :each -> text <> "\n\n" <> @edits_rule
-      :turn -> if turns == 0, do: text <> "\n\n" <> @edits_rule, else: text
+      :each -> text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule()
+      :turn ->
+        if turns == 0, do: text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule(), else: text
     end
   end
 

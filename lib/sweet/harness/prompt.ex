@@ -14,6 +14,19 @@ defmodule Sweet.Harness.Prompt do
   is executed (interpolation, attributes, macros).
   """
 
+  # The paragraph about leave for creations, deletions and edits. It stands in the system prompt
+  # in the very place where it always stood (see `base/0`), but it is not written there as a
+  # literal any more: the same text goes into the reply of the person (see `compose/4`) and into
+  # the result of a tool (see `Sweet.Session`, `with_reminder/2`). Copies of one rule diverge at
+  # the very first edit of one of them — therefore there is one copy and three places.
+  #
+  # It is glued to the person's reply on purpose: the rule decides in the place where the task is
+  # read, and not only in the constant core of the prompt.
+  @edits_rule "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. If, while making edits, it becomes necessary to make new edits for which express leave has not been given, they must not be made without obtaining express leave from the master user. Do not do a git commit without explicit express leave from the master user. Do not do a git push without explicit express leave from the master user. Do not build containers without unambiguous express leave from the master user. Do not run containers without unambiguous express leave from the master user."
+
+  @doc "The paragraph about leave for creations, deletions and edits — one for the prompt, for the reply and for the results of tools."
+  def edits_rule, do: @edits_rule
+
   @doc """
   Assemble the messages for the model.
 
@@ -134,7 +147,8 @@ defmodule Sweet.Harness.Prompt do
       here_and_now(state),
       block("Found by meaning (ordered by closeness):", found_text(found)),
       block("Latest in the conversation:", tail_text(tail)),
-      question
+      question,
+      @edits_rule
     ]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n\n")
@@ -249,10 +263,9 @@ defmodule Sweet.Harness.Prompt do
   - you are about to state that something was already decided or already checked, and you are not sure it was in THIS session.
 
   How to phrase the query — write the utterance that WOULD HAVE CONTAINED the answer, not the question you are asking yourself:
-  - a statement of the fact as it would have been said back then is the safest shape; the question in your head also works, on this model the two ranked the right memory first, 0.88 against 0.88, and the difference was noise;
-  - name things by the names they had in the work: `git pull`, `SerpBase`, `rate limit`, `memsearch`. Keywords find at least as well as a whole sentence;
-  - one query, one topic. Two topics — two calls. A long query built from the whole conversation resembles several memories at once and stops telling them apart;
-  - first person is fine ("what did we decide about the deploy").
+  - a statement of the fact, the question in your head, a couple of keywords — any of these finds the right memory. The shape barely matters;
+  - name things by the names they had in the work: the command, the service, the term as it was said. Names find better than a description;
+  - one query, one topic. Two topics — two calls. A long query built from the whole conversation resembles several memories at once and stops telling them apart.
 
   What comes back is memory, not your own answer:
   - it is a quotation of an earlier conversation, up to the day it was said;
@@ -452,9 +465,9 @@ defmodule Sweet.Harness.Prompt do
         own; this is how you ask it yourself, with a query of your own.
 
         Phrase the query as the utterance that WOULD HAVE CONTAINED the answer, not
-        as the question you are asking yourself. A statement of the fact, or the
-        names it was discussed under ("SerpBase", "rate limit", "deploy") — both
-        work. What costs is LENGTH: one query, one topic. A long query resembles
+        as the question you are asking yourself. A statement of the fact, the
+        question in your head, the names it was discussed under — any of these
+        works. What costs is LENGTH: one query, one topic. A long query resembles
         several memories at once and stops telling them apart.
 
         What comes back is a quotation of an earlier conversation with its date and
@@ -640,7 +653,7 @@ defmodule Sweet.Harness.Prompt do
 
     Delegate parallel context-heavy research or independent implementation; do a single known lookup, edit, or command inline.
 
-    Any edits — only after unambiguous express leave from the human. If, while making edits, it becomes necessary to make new edits for which express leave has not been given, they must not be made without obtaining express leave from the human. Do not do a git commit without explicit express leave from the human. Do not do a git push without explicit express leave from the human. Do not build containers without unambiguous express leave from the human. Do not run containers without unambiguous express leave from the human.
+    #{@edits_rule}
 
     Don't spawn new terminology. Use the terminology that has already taken shape naturally.
     """
