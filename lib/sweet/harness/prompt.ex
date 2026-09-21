@@ -151,7 +151,10 @@ defmodule Sweet.Harness.Prompt do
   defp compose(state, found, tail, question) do
     [
       block("Latest in the conversation:", tail_text(tail)),
-      block("Found by meaning (ordered by closeness):", found_text(found)),
+      block(
+        "Found by meaning — quotations from earlier conversations, not this session (ordered by closeness):",
+        found_text(found)
+      ),
       here_and_now(state),
       question,
       edits_rule(state)
