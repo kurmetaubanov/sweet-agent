@@ -15,13 +15,19 @@ A plain file, run from the kernel:
 ```python
 import subprocess, sys
 r = subprocess.run(
-        [sys.executable, "/skills/websearch/search.py", "what to search for"],
+        ["timeout", "10", sys.executable, "/skills/websearch/search.py", "what to search for"],
         capture_output=True, text=True)
 print(r.stdout)
 ```
 
 Keys: `--num N` — how many results (5 by default), `--json` — the raw API
 response, if you need to pick the fields apart yourself.
+
+**Always give the call a wall-clock deadline**, as above. Without it a request
+that SerpBase answers slowly just hangs and does not come back; the per-read
+timeout inside `search.py` is 45 seconds per attempt, so a stalled call looks
+like a very long wait rather than an error. A normal answer arrives in 2-6
+seconds, so 10 seconds leaves room and still fails fast.
 
 The result can go straight into a variable, so the same thing is not searched
 twice.
