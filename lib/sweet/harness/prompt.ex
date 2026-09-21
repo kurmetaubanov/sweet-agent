@@ -14,14 +14,14 @@ defmodule Sweet.Harness.Prompt do
   is executed (interpolation, attributes, macros).
   """
 
-  # The paragraph about leave for creations, deletions and edits. It stands in the system prompt
-  # in the very place where it always stood (see `base/0`), but it is not written there as a
-  # literal any more: the same text goes into the reply of the person (see `compose/4`) and into
+  # The paragraph about leave for creations, deletions and edits. It is one copy for three places:
+  # the system part of the prompt (see `system/1`), the reply of the person (see `compose/4`) and
   # the result of a tool (see `Sweet.Session`, `with_reminder/2`). Copies of one rule diverge at
-  # the very first edit of one of them — therefore there is one copy and three places.
+  # the very first edit of one of them.
   #
-  # It is glued to the person's reply on purpose: the rule decides in the place where the task is
-  # read, and not only in the constant core of the prompt.
+  # In the system part it stands LAST, as a piece of its own after the memory section: the rule
+  # travels to the model as one text, and the person's reply repeats it at its own end, where the
+  # task is read.
   @edits_rule "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. If, while making edits, it becomes necessary to make new edits for which unambiguous, strict leave (acknowledgement) has not been given, they must not be made without obtaining unambiguous, strict leave (acknowledgement) from the master user. Do not do a git commit without unambiguous, strict leave (acknowledgement) from the master user. Do not do a git push without unambiguous, strict leave (acknowledgement) from the master user. Do not build containers without unambiguous, strict leave (acknowledgement) from the master user. Do not run containers without unambiguous, strict leave (acknowledgement) from the master user."
 
   @doc "The paragraph about leave for creations, deletions and edits — one for the prompt, for the reply and for the results of tools."
@@ -38,6 +38,12 @@ defmodule Sweet.Harness.Prompt do
        — it weighs zero;
     2. the paragraphs found in the memory by the query “window + question”;
     3. the question itself.
+
+  The order inside the message is the order of the cache: the window first, then what is new this
+  turn — what was found and the time, — then the question. Everything that changes from turn to
+  turn stands at the end, next to the question: the head of the message stays the same and is read
+  from the cache, while what cannot be cached does not cut that head off. The time and what was
+  found are useless after the question anyway — the model ends its reading on the question.
 
   The query to the memory is built from the window and the question together: a bare question catches
   at the places where it itself is asked, while the window sets the topic and that removes this.
@@ -144,9 +150,9 @@ defmodule Sweet.Harness.Prompt do
 
   defp compose(state, found, tail, question) do
     [
-      here_and_now(state),
-      block("Found by meaning (ordered by closeness):", found_text(found)),
       block("Latest in the conversation:", tail_text(tail)),
+      block("Found by meaning (ordered by closeness):", found_text(found)),
+      here_and_now(state),
       question,
       @edits_rule
     ]
@@ -167,6 +173,10 @@ defmodule Sweet.Harness.Prompt do
   # Where and when we are. In the user message, and not in the system one:
   # the system prompt is the same from turn to turn and is therefore cached, while the time
   # changes every turn and would break the cache entirely.
+  #
+  # In the user message it stands after the window and after what was found, next to the question:
+  # everything that changes every turn is gathered in one place at the end, and the head of the
+  # message stays the same from turn to turn — that is what the cache reads.
   #
   # The memory is common to all sessions, and without these two lines what is found cannot be
   # placed in time: yesterday's conversation from another chat looks exactly
@@ -255,7 +265,7 @@ defmodule Sweet.Harness.Prompt do
   @asking_memory """
   ## Asking your own memory
 
-  The block "Found by meaning" above is what memory offered on its own: its query was built from the tail of the conversation and the last question. That is often not the same as what you actually need — and `recall` lets you ask memory yourself.
+  The block "Found by meaning" below is what memory offered on its own: its query was built from the tail of the conversation and the last question. That is often not the same as what you actually need — and `recall` lets you ask memory yourself.
 
   Call it when:
   - the automatic block came back empty or off-topic;
@@ -282,7 +292,7 @@ defmodule Sweet.Harness.Prompt do
     # The obligatory skills and the memory section stand side by side: both are a rule that is
     # with the model on every turn, and not a find by the meaning of the question. `base()` was not
     # extended by the second one — it is about work with the tools as a whole, while this is about the memory.
-    [base(), always_skills(), @asking_memory]
+    [base(), always_skills(), @asking_memory, @edits_rule]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n\n")
   end
@@ -461,7 +471,7 @@ defmodule Sweet.Harness.Prompt do
         "name" => "recall",
         "description" => """
         Ask your own memory: the earlier conversations, the memory is shared by all
-        sessions. The block "Found by meaning" above is what memory offered on its
+        sessions. The block "Found by meaning" below is what memory offered on its
         own; this is how you ask it yourself, with a query of your own.
 
         Phrase the query as the utterance that WOULD HAVE CONTAINED the answer, not
@@ -652,8 +662,6 @@ defmodule Sweet.Harness.Prompt do
     Files are exchanged with the human through folders, there is no separate tool: what he sends you lands in /workspace/exchange/inbox, and whatever you put into /workspace/exchange/outbox is delivered to him after the turn. Images are shown inline, everything else arrives as a file. No other exchange folder exists — do not invent /data/outbox and the like. Do not put working drafts into outbox, only what the human actually needs.
 
     Delegate parallel context-heavy research or independent implementation; do a single known lookup, edit, or command inline.
-
-    #{@edits_rule}
 
     Don't spawn new terminology. Use the terminology that has already taken shape naturally.
     """
