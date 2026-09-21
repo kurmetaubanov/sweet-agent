@@ -22,10 +22,10 @@ defmodule Sweet.Harness.Prompt do
   # In the system part it stands LAST, as a piece of its own after the memory section: the rule
   # travels to the model as one text, and the person's reply repeats it at its own end, where the
   # task is read.
-  @edits_rule "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. Leave is valid only in the session in which it was given; it does not carry over into another session. If, while making edits, it becomes necessary to make new edits for which unambiguous, strict leave (acknowledgement) has not been given, they must not be made without obtaining unambiguous, strict leave (acknowledgement) from the master user. Do not do a git commit without unambiguous, strict leave (acknowledgement) from the master user. Do not do a git push without unambiguous, strict leave (acknowledgement) from the master user. Do not build containers without unambiguous, strict leave (acknowledgement) from the master user. Do not run containers without unambiguous, strict leave (acknowledgement) from the master user."
-
   @doc "The paragraph about leave for creations, deletions and edits — one for the prompt, for the reply and for the results of tools."
-  def edits_rule, do: @edits_rule
+  def edits_rule(state) do
+    "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. Leave is valid only in this session (#{state.id}); it does not carry over from another session. If, while making edits, it becomes necessary to make new edits for which unambiguous, strict leave (acknowledgement) has not been given, they must not be made without obtaining unambiguous, strict leave (acknowledgement) from the master user. Do not do a git commit without unambiguous, strict leave (acknowledgement) from the master user. Do not do a git push without unambiguous, strict leave (acknowledgement) from the master user. Do not build containers without unambiguous, strict leave (acknowledgement) from the master user. Do not run containers without unambiguous, strict leave (acknowledgement) from the master user."
+  end
 
   @doc """
   Assemble the messages for the model.
@@ -154,7 +154,7 @@ defmodule Sweet.Harness.Prompt do
       block("Found by meaning (ordered by closeness):", found_text(found)),
       here_and_now(state),
       question,
-      @edits_rule
+      edits_rule(state)
     ]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n\n")
@@ -288,11 +288,11 @@ defmodule Sweet.Harness.Prompt do
   # The system part of the prompt: `base()` — the constant core, the obligatory skills —
   # also constant, but as a separate piece. In the code they are separate deliberately:
   # to extend this construction later is more convenient than to grow one text.
-  def system(_state) do
+  def system(state) do
     # The obligatory skills and the memory section stand side by side: both are a rule that is
     # with the model on every turn, and not a find by the meaning of the question. `base()` was not
     # extended by the second one — it is about work with the tools as a whole, while this is about the memory.
-    [base(), always_skills(), @asking_memory, @edits_rule]
+    [base(), always_skills(), @asking_memory, edits_rule(state)]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n\n")
   end

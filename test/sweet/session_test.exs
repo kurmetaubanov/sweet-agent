@@ -214,10 +214,12 @@ defmodule Sweet.SessionTest do
   # The wording is one for both deliberately: two versions of one rule diverge at the very first
   # edit of one of them — therefore the literal left the prompt, and the text lives in one place.
   test "the rule about leave stands in the system prompt once" do
-    rule = Sweet.Harness.Prompt.edits_rule()
+    rule = Sweet.Harness.Prompt.edits_rule(%{id: "t-any"})
     text = Sweet.Harness.Prompt.system(%{id: "t-any"})
 
     assert rule =~ "Any creations, deletions and edits"
+    # The rule names the session it is valid in: leave given in another one does not reach here.
+    assert rule =~ "(t-any)"
     assert text =~ rule
     # One copy: the prompt carries the rule itself, and not a rule plus the base of it.
     assert length(String.split(text, rule)) == 2
@@ -228,10 +230,10 @@ defmodule Sweet.SessionTest do
     [%{"role" => "user", "content" => content}] =
       Sweet.Harness.Prompt.build(%{id: id}, "what about the volumes?")
 
-    assert String.ends_with?(content, Sweet.Harness.Prompt.edits_rule())
+    assert String.ends_with?(content, Sweet.Harness.Prompt.edits_rule(%{id: id}))
     # And it stands behind the question, and not before it: the question must not turn
     # out to be the last thing said under the rule.
-    assert content =~ "what about the volumes?\n\n" <> Sweet.Harness.Prompt.edits_rule()
+    assert content =~ "what about the volumes?\n\n" <> Sweet.Harness.Prompt.edits_rule(%{id: id})
   end
 
   # The rule is appended to the reply in the PROMPT, and not to the record: into the memory goes

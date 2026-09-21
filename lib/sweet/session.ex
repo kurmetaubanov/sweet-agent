@@ -131,7 +131,7 @@ defmodule Sweet.Session do
   # --- Callbacks ---
 
   # The paragraph about leave for edits is not written here: it comes from `Sweet.Harness.Prompt`
-  # (see `edits_rule/0`). One copy of the rule for the system prompt, for the reply of the person
+  # (see `edits_rule/1`). One copy of the rule for the system prompt, for the reply of the person
   # and for the result of a tool — two versions of one rule diverge at the very first edit of one of them.
 
   @impl true
@@ -991,7 +991,7 @@ defmodule Sweet.Session do
       {:ok, hand} ->
         case start.(hand) do
           {:ok, %{"job" => job}} ->
-            started = with_reminder("job started in background, #{job}", state.turns)
+            started = with_reminder("job started in background, #{job}", state)
 
             # The job is taken into account BY ITS OWN PROCESS, and not by a record in the
             # state: this function runs in the task of the turn, and everything it
@@ -1156,12 +1156,12 @@ defmodule Sweet.Session do
   #
   # We count by the rounds: turns grows on every round of the cycle, while the state
   # is given to the tool before that increment. That means :turn is turns == 0.
-  defp with_reminder(text, turns) do
+  defp with_reminder(text, state) do
     case Application.fetch_env!(:sweet, :reminder_edits) do
       :off -> text
-      :each -> text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule()
+      :each -> text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule(state)
       :turn ->
-        if turns == 0, do: text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule(), else: text
+        if state.turns == 0, do: text <> "\n\n" <> Sweet.Harness.Prompt.edits_rule(state), else: text
     end
   end
 
