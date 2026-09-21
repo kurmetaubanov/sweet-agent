@@ -182,9 +182,11 @@ defmodule Sweet.LLM do
           {:ok, %{status: status}} ->
             {:error, {:api_error, status, nil}, delivered?(delivered)}
 
-          # A break in the middle of the stream. There is no accumulator here — Finch does not give it,
-          # — but our counter survived the break: part of the answer could already have gone off.
-          {:error, reason} ->
+          # A break in the middle of the stream. Finch gives the accumulator back together with
+          # the error (it has done so since 0.20), but the sign is read from our counter, and not
+          # from it: the counter lived through the break, and the accumulator may have died with
+          # the stream. Part of the answer could already have gone off.
+          {:error, reason, _acc} ->
             {:error, reason, delivered?(delivered)}
         end
       after
