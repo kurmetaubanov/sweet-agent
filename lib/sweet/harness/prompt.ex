@@ -22,7 +22,7 @@ defmodule Sweet.Harness.Prompt do
   #
   # It is glued to the person's reply on purpose: the rule decides in the place where the task is
   # read, and not only in the constant core of the prompt.
-  @edits_rule "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. If, while making edits, it becomes necessary to make new edits for which express leave has not been given, they must not be made without obtaining express leave from the master user. Do not do a git commit without explicit express leave from the master user. Do not do a git push without explicit express leave from the master user. Do not build containers without unambiguous express leave from the master user. Do not run containers without unambiguous express leave from the master user."
+  @edits_rule "Any creations, deletions and edits — only after unambiguous, strict leave (acknowledgement) from the master user. If, while making edits, it becomes necessary to make new edits for which unambiguous, strict leave (acknowledgement) has not been given, they must not be made without obtaining unambiguous, strict leave (acknowledgement) from the master user. Do not do a git commit without unambiguous, strict leave (acknowledgement) from the master user. Do not do a git push without unambiguous, strict leave (acknowledgement) from the master user. Do not build containers without unambiguous, strict leave (acknowledgement) from the master user. Do not run containers without unambiguous, strict leave (acknowledgement) from the master user."
 
   @doc "The paragraph about leave for creations, deletions and edits — one for the prompt, for the reply and for the results of tools."
   def edits_rule, do: @edits_rule
