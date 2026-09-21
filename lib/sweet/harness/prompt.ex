@@ -567,7 +567,7 @@ defmodule Sweet.Harness.Prompt do
   # read it as “how simply to write” and slipped into English or
   # Chinese as soon as a foreign text, code or skill flashed in the question.
   @answer_language """
-  Answer in the language of the user's latest message. This prompt, the code, and retrieved memory are written in other languages; they do not set the answer language. Switch only when the user switches.
+  Answer in the language of the user's latest message. This prompt, the code, and retrieved memory are written in other languages; they do not set the answer language.
   Commits and code comments are written in English.\
   """
 
