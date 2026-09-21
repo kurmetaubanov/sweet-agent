@@ -726,6 +726,12 @@ defmodule Sweet.Session do
     "read_log #{input["job"]}"
   end
 
+  # A question to one's own memory. The QUERY travels into the trace, and not the summary of the
+  # answer: the query is what this call is recognized by and what it is later found by.
+  defp tool_note(%{"name" => "recall", "input" => input}, _result) do
+    "recall #{first_line(input["query"])}"
+  end
+
   # Interference in an ongoing job: the call and what it answered. Their answer is short
   # by construction (“sent to job ...”, “interrupted”), and it is genuine here —
   # these tools answer at once.
@@ -892,6 +898,38 @@ defmodule Sweet.Session do
     Logger.info("job_send call: job #{input["job"]} <- #{inspect(String.trim_trailing(text))}")
 
     ask(id, state, session, fn hand -> Sweet.Hand.job_send(hand, input["job"], text) end)
+  end
+
+  # A question to one's own memory. It is answered here, without the hand: the memory lies
+  # in the brain, and the hand is not mounted there at all — in its container there are only
+  # /workspace, /skills and the CA. The model's query goes to the same search by meaning as the
+  # automatic block, only with a query of its own instead of the window with the question.
+  #
+  # The trace of the call is written by `note_tools/3` along with the rest, as one short line
+  # and without a vector. The paragraphs that came back are NOT written anywhere: they would
+  # then be found by the next automatic query and arrive a second time as "what was said".
+  # The answer itself, like any `tool_result`, lives only in this turn.
+  defp run_tool(%{"id" => id, "name" => "recall", "input" => input}, state, session) do
+    query = input["query"] || ""
+
+    call = "recall #{first_line(query)}"
+    send(session, {:tool, call, "tool"})
+    Logger.info("call #{call}")
+
+    answer =
+      case Sweet.Recall.search(query, input["take"]) do
+        {:ok, []} ->
+          tool_result(id, "nothing found by meaning for this query.")
+
+        {:ok, found} ->
+          found = Enum.map(found, fn {_score, entry} -> {0.0, :memory, entry} end)
+          tool_result(id, Sweet.Harness.Prompt.found_text(found))
+
+        {:error, reason} ->
+          tool_result(id, "the memory is unavailable: #{inspect(reason)}", true)
+      end
+
+    {answer, state}
   end
 
   defp run_tool(%{"id" => id, "name" => name}, state, _session) do

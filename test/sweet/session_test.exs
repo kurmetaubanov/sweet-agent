@@ -165,6 +165,49 @@ defmodule Sweet.SessionTest do
 
   defp jobs(id), do: Sweet.Job.list(id)
 
+  # --- A question to one's own memory ---
+
+  # The query to the memory is the window plus the question, and the question gets into the window
+  # along the inbox (see `put_inbox/4`) — that is, the same text stands in it twice. What this
+  # costs is shown in the prompt: a query works the worse the longer it gets.
+  test "the question is not glued to the window a second time" do
+    # The usual case: the window does not contain the question yet, and it is the question
+    # that sets the topic together with the window.
+    assert Sweet.Harness.Prompt.memory_query("[user] hello\n\n[user] and where?", "where is the volume?") ==
+             "[user] hello\n\n[user] and where?\n\nwhere is the volume?"
+
+    # And here the question already got into the window along the inbox (see `put_inbox/4`) —
+    # and it is not glued on a second time.
+    assert Sweet.Harness.Prompt.memory_query("[user] hello\n\nwhere is the volume?", "where is the volume?") ==
+             "[user] hello\n\nwhere is the volume?"
+  end
+
+  # The question is cut into paragraphs by empty lines (see `Sweet.Recall.split/1`), therefore
+  # in the window it lies as several records. We cut it off by the text, and not record by record.
+  test "a question of several paragraphs is cut off whole" do
+    question = "spread the table\n\nand count the errors"
+
+    assert Sweet.Harness.Prompt.memory_query("[user] hello\n\n" <> question, question) ==
+             "[user] hello\n\n" <> question
+  end
+
+  # The first question of a session: the window is empty, and the query is the question itself.
+  test "an empty window leaves the question alone" do
+    assert Sweet.Harness.Prompt.memory_query("", "who is there?") == "who is there?"
+  end
+
+  # The `recall` tool asks the memory itself, in the brain, and the answer is rendered by the same
+  # function that renders the automatic block: memory found by itself and memory found to
+  # a question must be read by the model in one and the same form.
+  test "the answer of recall is the same form as the automatic block" do
+    entry = %{role: "user", text: "the volume is mounted read-only", session: "s-1", at: 1}
+
+    text = Sweet.Harness.Prompt.found_text([{0.9, :memory, entry}])
+
+    assert text =~ "the volume is mounted read-only"
+    assert text =~ "session s-1"
+  end
+
   test "the account of a job survives the task that started it", %{session: session, id: id} do
     # This is the check of that very breakage: the job is started in a SEPARATE
     # task — exactly as in `run_tool/3` — and after its death the session must

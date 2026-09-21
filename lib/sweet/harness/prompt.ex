@@ -36,9 +36,10 @@ defmodule Sweet.Harness.Prompt do
   """
   def build(state, question) do
     tail = Sweet.Recall.tail(state.id, Application.fetch_env!(:sweet, :recall_tail_messages))
+
     tail_text = Enum.map_join(tail, "\n\n", & &1.text)
 
-    query = "#{tail_text}\n\n#{question}"
+    query = memory_query(tail_text, question)
 
     recalled =
       case Sweet.Recall.search(query) do
@@ -66,6 +67,33 @@ defmodule Sweet.Harness.Prompt do
     log(found)
 
     [%{"role" => "user", "content" => compose(state, found, tail, question)}]
+  end
+
+  # The query to the memory: the window of the conversation together with the question. A bare
+  # question catches at the places where it is itself asked; the window sets the topic, and that
+  # removes it.
+  #
+  # The question is already the last record of the window: it goes into the memory at the same
+  # instant as into the inbox (see `put_inbox/4`), while the window is taken after that. To glue
+  # it on a second time means to weigh the query with a copy of itself — and a query works the
+  # worse the longer it gets. When the cast has not been processed yet, the window has no
+  # duplicate either, and then the question stands alone.
+  #
+  # We cut the duplicate off the JOINED text, and not from the tail record by record: the
+  # question is cut into paragraphs by empty lines (see `Sweet.Recall.split/1`), and a question
+  # of three paragraphs would lie in the window as three records.
+  #
+  # Open (`@doc false`) for the sake of checks: a pure function, and to check it through
+  # a living turn would mean to raise the memory, the embedder and the model for the sake of
+  # a line of text.
+  @doc false
+  def memory_query(tail_text, question) do
+    window =
+      if tail_text != "" and String.ends_with?(tail_text, question),
+        do: tail_text |> String.replace_suffix(question, "") |> String.trim_trailing(),
+        else: tail_text
+
+    if window == "", do: question, else: window <> "\n\n" <> question
   end
 
   # The traces of calls — AFTER the selection and the cut, and not before. They have no vector, they themselves
@@ -147,7 +175,11 @@ defmodule Sweet.Harness.Prompt do
   defp block(_title, ""), do: ""
   defp block(title, body), do: "#{title}\n\n#{body}"
 
-  defp found_text(found) do
+  # The rendering is shared with the `recall` tool on purpose: what memory found by itself and
+  # what it found to a question must be read by the model in ONE AND THE SAME form, otherwise
+  # the second looks like another kind of knowledge — although it is the same memory.
+  @doc false
+  def found_text(found) do
     Enum.map_join(found, "\n\n", fn
       {_score, :skill, skill} ->
         skill_text(skill, "skill")
@@ -191,11 +223,55 @@ defmodule Sweet.Harness.Prompt do
     end
   end
 
+  # Asking the memory oneself — a section of its own, and not part of `base()`: it stands
+  # after the obligatory skills and is about the same thing they are.
+  #
+  # The rule about the SHAPE of the query comes from a measurement on this very model
+  # (`multilingual-e5-small`, the prefixes `query:`/`passage:`): thirteen phrasings of six facts
+  # from a live conversation were run — a bare question, a question with the window, a statement of the
+  # fact, keywords, first person. All thirteen came out first on their own fact, while the
+  # difference between a question and a statement was 0.003 of cosine, that is, noise. What
+  # really decides is the LENGTH: a query glued from the whole conversation resembles several
+  # memories at once and stops telling them apart, and past 512 tokens the model cuts off the
+  # tail — together with the question itself.
+  #
+  # The rule about quotations is not politeness either. The answers here carry the hashes of jobs, and
+  # “these signals were confirmed” said over a recalled line is indistinguishable in the text
+  # from a real check — while behind it stands only the fact that it was said so once.
+  @asking_memory """
+  ## Asking your own memory
+
+  The block "Found by meaning" above is what memory offered on its own: its query was built from the tail of the conversation and the last question. That is often not the same as what you actually need — and `recall` lets you ask memory yourself.
+
+  Call it when:
+  - the automatic block came back empty or off-topic;
+  - you need a fact from a conversation that is not in this window;
+  - you are about to state that something was already decided or already checked, and you are not sure it was in THIS session.
+
+  How to phrase the query — write the utterance that WOULD HAVE CONTAINED the answer, not the question you are asking yourself:
+  - a statement of the fact as it would have been said back then is the safest shape; the question in your head also works, on this model the two ranked the right memory first, 0.88 against 0.88, and the difference was noise;
+  - name things by the names they had in the work: `git pull`, `SerpBase`, `rate limit`, `memsearch`. Keywords find at least as well as a whole sentence;
+  - one query, one topic. Two topics — two calls. A long query built from the whole conversation resembles several memories at once and stops telling them apart;
+  - first person is fine ("what did we decide about the deploy").
+
+  What comes back is memory, not your own answer:
+  - it is a quotation of an earlier conversation, up to the day it was said;
+  - do not cite it as if you had just checked it — a fact recalled is not a fact verified;
+  - a hash or a number that came back may be reused, but the log behind it is opened with `read_log`, not retold from memory.
+
+  If the first query brings nothing useful, change the WORDS, not the punctuation: another name of the same thing, another participant. Two or three shapes, not ten — and if memory stays silent, say so and ask the human.\
+  """
+
   # The system part of the prompt: `base()` — the constant core, the obligatory skills —
   # also constant, but as a separate piece. In the code they are separate deliberately:
   # to extend this construction later is more convenient than to grow one text.
   def system(_state) do
-    [base(), always_skills()] |> Enum.reject(&(&1 == "")) |> Enum.join("\n\n")
+    # The obligatory skills and the memory section stand side by side: both are a rule that is
+    # with the model on every turn, and not a find by the meaning of the question. `base()` was not
+    # extended by the second one — it is about work with the tools as a whole, while this is about the memory.
+    [base(), always_skills(), @asking_memory]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
   end
 
   @doc "The tools available to the model. The answer is one for all: the job's hash."
@@ -366,6 +442,36 @@ defmodule Sweet.Harness.Prompt do
             "signal" => %{"type" => "string", "enum" => ["interrupt", "kill"]}
           },
           "required" => ["job"]
+        }
+      },
+      %{
+        "name" => "recall",
+        "description" => """
+        Ask your own memory: the earlier conversations, the memory is shared by all
+        sessions. The block "Found by meaning" above is what memory offered on its
+        own; this is how you ask it yourself, with a query of your own.
+
+        Phrase the query as the utterance that WOULD HAVE CONTAINED the answer, not
+        as the question you are asking yourself. A statement of the fact, or the
+        names it was discussed under ("SerpBase", "rate limit", "deploy") — both
+        work. What costs is LENGTH: one query, one topic. A long query resembles
+        several memories at once and stops telling them apart.
+
+        What comes back is a quotation of an earlier conversation with its date and
+        its session. It is not a check — do not cite it as something you have just
+        verified yourself. A hash inside it may be reused, but the log behind that
+        hash is opened with `read_log`, not retold from memory.
+        """,
+        "input_schema" => %{
+          "type" => "object",
+          "properties" => %{
+            "query" => %{
+              "type" => "string",
+              "description" => "what to look for, in the words the answer would have been said in"
+            },
+            "take" => %{"type" => "integer", "description" => "how many paragraphs to bring back"}
+          },
+          "required" => ["query"]
         }
       }
     ]
