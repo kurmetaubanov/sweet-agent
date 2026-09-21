@@ -536,13 +536,6 @@ defmodule Sweet.Harness.Prompt do
   The user should be able to picture the subject after reading the answer. A report of related facts about the subject is worse than a report that gives a representation of the subject.\
   """
 
-  # Taken verbatim from the user's wording. The rule stands next to
-  # “proportionality” and deliberately repeats it from the other side: there — about
-  # the volume of the work done, here — about an extra round with a tool.
-  @answer_without_extra_tests """
-  If you can answer the user's question without additional tests, do it.\
-  """
-
   # The speech of the agent — as a whole, word for word from the system prompt of Claude Code
   # (the section “Text output”). In one's own words one cannot write it better here, and to argue with
   # the original there is nothing to: this is exactly that task and exactly that set of rakes.
@@ -574,7 +567,8 @@ defmodule Sweet.Harness.Prompt do
   # read it as “how simply to write” and slipped into English or
   # Chinese as soon as a foreign text, code or skill flashed in the question.
   @answer_language """
-  Answer in the language the conversation is conducted in — the language of the user's messages. This prompt, the code, and retrieved memory are written in other languages; they do not set the answer language. Switch only when the user switches.\
+  Answer in the language of the user's latest message. This prompt, the code, and retrieved memory are written in other languages; they do not set the answer language. Switch only when the user switches.
+  Commits and code comments are written in English.\
   """
 
   # About reading logs — as a separate block, because this rule is about the MEMORY, and
@@ -614,8 +608,6 @@ defmodule Sweet.Harness.Prompt do
     When you are done, stop calling tools and state your final answer.
 
     Match the amount of work to the question. Answer a simple question directly, without tools; when a single command answers it, run that one command and answer. Once you have enough to answer, answer — do not re-run a command whose result you already have, and do not confirm a result a second way unless it looked wrong. Do exactly what was asked and do not widen the task on your own initiative; if you notice something adjacent worth doing, say so instead of doing it. If a skill covers the task, go through that skill rather than inventing your own route. When an external service refuses you, read the refusal and decide what to do; do not repeat the same request over and over hoping for a different answer.
-
-    #{@answer_without_extra_tests}
 
     #{@text_output}
 
