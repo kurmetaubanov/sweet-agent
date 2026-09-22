@@ -549,6 +549,44 @@ defmodule Sweet.SessionTest do
     assert Sweet.Session.job_list_text(%{}, []) =~ "there are no background jobs"
   end
 
+  test "a job the hand does not know is taken off the accounting of the brain", %{session: session, id: id} do
+    running_job(session, id, "j1")
+    running_job(session, id, "j2")
+
+    # The hand answers about "j2" alone: the end of "j1" never reached the brain — the hand was
+    # restarted, and its table does not know the job any more.
+    hand = [%{"job" => "j2", "state" => "running", "runtime_s" => 2.0, "quiet_s" => 0.5, "ask" => "", "exit" => nil}]
+    ours = Map.new(jobs(id), &{&1.job, &1})
+
+    dropped = Sweet.Session.forget_missing(id, ours, hand)
+
+    # The hashes that were dropped are named: a record that went away silently would be the same
+    # lie as a dead job shown as running.
+    assert dropped == ["j1"]
+    assert Sweet.Job.find(id, "j1") == nil
+    refute Enum.any?(jobs(id), &(&1.job == "j1"))
+    assert Sweet.Job.find(id, "j2")
+
+    text = Sweet.Session.job_list_text(ours, hand, dropped)
+
+    assert text =~ "job j2"
+    assert text =~ "taken off the accounting of the brain"
+  end
+
+  test "the accounting is not touched for a job started from inside a cell", %{session: session, id: id} do
+    running_job(session, id, "j1")
+
+    # "j2" is known to the hand alone (`bash()` from inside a cell): it must not be read as a
+    # record of the brain that died.
+    hand = [
+      %{"job" => "j1", "state" => "running", "runtime_s" => 1.0, "quiet_s" => 0.0, "ask" => "", "exit" => nil},
+      %{"job" => "j2", "state" => "running", "runtime_s" => 1.0, "quiet_s" => 0.0, "ask" => "", "exit" => nil}
+    ]
+
+    assert Sweet.Session.forget_missing(id, Map.new(jobs(id), &{&1.job, &1}), hand) == []
+    assert Sweet.Job.find(id, "j1")
+  end
+
   test "job_signal names the command it puts out", %{session: session, id: id} do
     running_job(session, id, "j1")
 

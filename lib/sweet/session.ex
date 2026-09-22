@@ -875,6 +875,9 @@ defmodule Sweet.Session do
   # the same job. The hand also sees jobs the brain does NOT know — those started from inside a
   # cell (`bash()`): the line about them comes without a hash of the brain.
   #
+  # The records of the brain that the hand does NOT know are dropped right here (see
+  # `forget_missing/3`): this is the only place where both accounts lie side by side.
+  #
   # The line is assembled by `Sweet.Job.line/1` here, and by the hand — `describe_job/1` there. They
   # are assembled in one order and out of the same parts on purpose: a second picture of one state
   # would be a second truth.
@@ -888,7 +891,7 @@ defmodule Sweet.Session do
       {:ok, hand} ->
         case Sweet.Hand.job_list(hand) do
           {:ok, %{"result" => jobs, "error" => ""}} when is_list(jobs) ->
-            {tool_result(id, job_list_text(ours, jobs)), state}
+            {tool_result(id, job_list_text(ours, jobs, forget_missing(state.id, ours, jobs))), state}
 
           {:ok, %{} = answer} ->
             {tool_result(id, "the hand answered with something else: #{inspect(answer)}", true), state}
@@ -1155,12 +1158,50 @@ defmodule Sweet.Session do
   # the brain counts the whole life of a job (the ceiling is counted by it), while the hand answers
   # about its own process — "it is running, it is waiting for input, it has been silent for so long".
   @doc false
-  def job_list_text(ours, jobs) do
-    if jobs == [] do
+  #
+  # A job that the hand does not know is over. Brain learns about the end of a job not from the
+  # process — the process lives behind the network, in the container of the hand — but from the
+  # event "finished", and that event is lost when the hand is restarted or the channel breaks. Such
+  # a record lives in the accounting until the hand itself dies, and the model sees it as running at
+  # every turn while the process is long gone.
+  #
+  # The list of jobs is the only place where the two accounts lie side by side, therefore the record
+  # is dropped here, and NOT by a timer: a ceiling that has expired says nothing about death, and a
+  # job after its ceiling is alive and well. The hand answers about its own table as a whole, so a
+  # record missing from it is missing for real; the hashes of the brain and of the hand agree, and a
+  # job started from inside a cell (`bash()`) is known to the hand alone and is not touched here.
+  #
+  # It returns the hashes that were dropped: losing a record without a word would be the same lie as
+  # showing a dead job as running.
+  def forget_missing(session_id, ours, jobs) do
+    known = MapSet.new(jobs, & &1["job"])
+
+    ours
+    |> Enum.reject(fn {job, _record} -> MapSet.member?(known, job) end)
+    |> Enum.map(fn {job, _record} ->
+      Sweet.Job.finish(session_id, job)
+      job
+    end)
+    |> Enum.sort()
+  end
+
+  @doc false
+  def job_list_text(ours, jobs, dropped \\ []) do
+    lines = Enum.map(jobs, &job_list_line(ours, &1)) ++ Enum.map(dropped, &dropped_line/1)
+
+    if lines == [] do
       "there are no background jobs: neither in the accounting nor in the hand."
     else
-      Enum.map_join(jobs, "\n", &job_list_line(ours, &1))
+      Enum.join(lines, "\n")
     end
+  end
+
+  # What is left of a record that was taken off the accounting (see `forget_missing/3`). It is here,
+  # and not in the accounting, on purpose: the job is gone, but the fact that it was named and has
+  # just disappeared must not.
+  defp dropped_line(job) do
+    "job #{job}  (taken off the accounting of the brain: the hand does not know it any more, " <>
+      "therefore the job is over — or its end was never reported)"
   end
 
   defp job_list_line(ours, state) do
