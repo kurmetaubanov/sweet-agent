@@ -10,6 +10,8 @@ defmodule Sweet.SessionTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   setup do
     dir = Path.join(System.tmp_dir!(), "sweet-session-#{System.unique_integer([:positive])}")
     previous = Application.get_env(:sweet, :recall_dir)
@@ -561,16 +563,26 @@ defmodule Sweet.SessionTest do
     dropped = Sweet.Session.forget_missing(id, ours, hand)
 
     # The hashes that were dropped are named: a record that went away silently would be the same
-    # lie as a dead job shown as running.
+    # lie as a dead job shown as running. The word is said to us, in the log, and not to the model.
     assert dropped == ["j1"]
     assert Sweet.Job.find(id, "j1") == nil
     refute Enum.any?(jobs(id), &(&1.job == "j1"))
     assert Sweet.Job.find(id, "j2")
 
-    text = Sweet.Session.job_list_text(ours, hand, dropped)
+    text = Sweet.Session.job_list_text(ours, hand)
 
     assert text =~ "job j2"
-    assert text =~ "taken off the accounting of the brain"
+    refute text =~ "j1"
+  end
+
+  test "a dropped record goes into the log and not into the answer", %{session: session, id: id} do
+    running_job(session, id, "j1")
+
+    ours = Map.new(jobs(id), &{&1.job, &1})
+    hand = [%{"job" => "j9", "state" => "running", "runtime_s" => 1.0, "quiet_s" => 0.0, "ask" => "", "exit" => nil}]
+
+    assert capture_log(fn -> assert Sweet.Session.forget_missing(id, ours, hand) == ["j1"] end) =~
+             "jobs taken off the accounting: j1"
   end
 
   test "the accounting is not touched for a job started from inside a cell", %{session: session, id: id} do

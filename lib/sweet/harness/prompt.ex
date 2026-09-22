@@ -456,10 +456,7 @@ defmodule Sweet.Harness.Prompt do
         separately, by `read_log`.
 
         A job marked as unknown to the brain was started from inside a cell
-        (`bash()`): the hand has it, the accounting of the brain does not. And the
-        other way round: a record of the brain that the hand does not know any
-        more is a job whose end was never reported — it is shown once as taken off
-        the accounting and then it is gone.
+        (`bash()`): the hand has it, the accounting of the brain does not.
 
         The line "still running" comes to you at every turn by itself: this tool is
         for the whole picture at once, and not for finding out that a job exists.

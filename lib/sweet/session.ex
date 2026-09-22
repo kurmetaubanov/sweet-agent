@@ -891,7 +891,8 @@ defmodule Sweet.Session do
       {:ok, hand} ->
         case Sweet.Hand.job_list(hand) do
           {:ok, %{"result" => jobs, "error" => ""}} when is_list(jobs) ->
-            {tool_result(id, job_list_text(ours, jobs, forget_missing(state.id, ours, jobs))), state}
+            forget_missing(state.id, ours, jobs)
+            {tool_result(id, job_list_text(ours, jobs)), state}
 
           {:ok, %{} = answer} ->
             {tool_result(id, "the hand answered with something else: #{inspect(answer)}", true), state}
@@ -1171,37 +1172,35 @@ defmodule Sweet.Session do
   # record missing from it is missing for real; the hashes of the brain and of the hand agree, and a
   # job started from inside a cell (`bash()`) is known to the hand alone and is not touched here.
   #
-  # It returns the hashes that were dropped: losing a record without a word would be the same lie as
-  # showing a dead job as running.
+  # It returns the hashes that were dropped. They go into the log, and not into the answer of the
+  # model: the job is over, there is nothing to be done about it, and a line about it would only
+  # take room in the context. Losing a record without a word would be the same lie as showing a
+  # dead job as running — therefore the word is said, but to us.
   def forget_missing(session_id, ours, jobs) do
     known = MapSet.new(jobs, & &1["job"])
 
-    ours
-    |> Enum.reject(fn {job, _record} -> MapSet.member?(known, job) end)
-    |> Enum.map(fn {job, _record} ->
-      Sweet.Job.finish(session_id, job)
-      job
-    end)
-    |> Enum.sort()
+    dropped =
+      ours
+      |> Enum.reject(fn {job, _record} -> MapSet.member?(known, job) end)
+      |> Enum.map(fn {job, _record} ->
+        Sweet.Job.finish(session_id, job)
+        job
+      end)
+      |> Enum.sort()
+
+    if dropped != [], do: Logger.info("jobs taken off the accounting: #{Enum.join(dropped, ", ")}")
+    dropped
   end
 
   @doc false
-  def job_list_text(ours, jobs, dropped \\ []) do
-    lines = Enum.map(jobs, &job_list_line(ours, &1)) ++ Enum.map(dropped, &dropped_line/1)
+  def job_list_text(ours, jobs) do
+    lines = Enum.map(jobs, &job_list_line(ours, &1))
 
     if lines == [] do
       "there are no background jobs: neither in the accounting nor in the hand."
     else
       Enum.join(lines, "\n")
     end
-  end
-
-  # What is left of a record that was taken off the accounting (see `forget_missing/3`). It is here,
-  # and not in the accounting, on purpose: the job is gone, but the fact that it was named and has
-  # just disappeared must not.
-  defp dropped_line(job) do
-    "job #{job}  (taken off the accounting of the brain: the hand does not know it any more, " <>
-      "therefore the job is over — or its end was never reported)"
   end
 
   defp job_list_line(ours, state) do
