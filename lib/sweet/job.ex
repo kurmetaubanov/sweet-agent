@@ -68,16 +68,23 @@ defmodule Sweet.Job do
 
   It is called FROM THE TASK OF THE TURN, and this is the only place where the account is established.
   It returns at once: establishing a record is not work, there is no reason to wait for it.
+
+  `pid` is the number of the process INSIDE the container of the hand. It is not addressable from
+  here — the hand lives in its own PID namespace, and there is no channel between us except frames —
+  therefore it is a LABEL, and not a handle: by it the person and the model see that the line of the brain
+  and the line of the hand speak about one and the same process. To act on a job is possible
+  only by its hash.
   """
-  def start(session, session_id, job, code) do
+  def start(session, session_id, job, code, pid \\ nil) do
     DynamicSupervisor.start_child(
       @supervisor,
-      {__MODULE__, %{session: session, session_id: session_id, job: job, code: code}}
+      {__MODULE__, %{session: session, session_id: session_id, job: job, code: code, pid: pid}}
     )
   end
 
   @doc """
-  What is going on at the session: the name, the code and the question, if the job asked it.
+  What is going on at the session: the name, the code, the question if the job asked it, the process,
+  the launch and the ceiling.
 
   The order is by the hash of the job. This travels into the context, and the context would change
   from the order for no reason at all: the model would see different hints on one
@@ -91,9 +98,59 @@ defmodule Sweet.Job do
     # nothing to assemble the jobs of a session by it with.
     @registry
     |> Registry.select([{{{session_id, :"$1"}, :_, :"$3"}, [], [{{:"$1", :"$3"}}]}])
-    |> Enum.map(fn {job, %{code: code, ask: ask}} -> %{job: job, code: code, ask: ask} end)
+    |> Enum.map(fn {job, record} -> Map.put(record, :job, job) end)
     |> Enum.sort_by(& &1.job)
   end
+
+  @doc """
+  One line about a job: the name, the process, the launch and the deadline.
+
+  The SAME line goes both into the inbox (the "still running" line of `take_inbox/1`) and into
+  the answer of `job_list`: the model must not see two different pictures of one state.
+  The code of the job does not go here — the line travels into the context at every turn, while
+  "what was launched" is asked for separately and rarely (see `Sweet.Session.run_tool/3`).
+  """
+  def line(%{job: job} = record) do
+    parts =
+      [
+        where(record),
+        "started #{clock(record.started_at)} (#{ago(record.started_at)}), hard limit #{short(record.limit_ms)}, " <>
+          "deadline #{clock(deadline(record))} (#{left(record)})"
+      ]
+
+    Enum.join(["job #{job}" | Enum.reject(parts, &is_nil/1)], "  ")
+  end
+
+  # --- the parts of the line ---
+
+  # A separate line for the pid, and not a field in the middle: for a job started by a hand of an
+  # older shape the number does not come at all, and an empty place in the middle would read as zero.
+  defp where(%{pid: pid}) when is_integer(pid), do: "pid #{pid}"
+  defp where(_record), do: nil
+
+  defp deadline(%{started_at: started, limit_ms: limit}), do: started + limit
+
+  defp clock(ms) do
+    ms
+    |> DateTime.from_unix!(:millisecond)
+    |> DateTime.to_time()
+    |> Time.to_iso8601()
+    |> String.slice(0, 8)
+    |> Kernel.<>("Z")
+  end
+
+  defp ago(started), do: short(System.system_time(:millisecond) - started)
+
+  defp left(record) do
+    case deadline(record) - System.system_time(:millisecond) do
+      ms when ms > 0 -> "in #{short(ms)}"
+      _ms -> "overdue"
+    end
+  end
+
+  # A length of time in the units in which it is read: seconds up to a minute, then minutes and seconds.
+  defp short(ms) when ms < 60_000, do: "#{max(div(ms, 1_000), 0)} s"
+  defp short(ms), do: "#{div(ms, 60_000)} m #{div(rem(ms, 60_000), 1_000)} s"
 
   @doc "The process of a job, if it is still running. `nil` — it is no longer there."
   def find(session_id, job) do
@@ -155,18 +212,29 @@ defmodule Sweet.Job do
   def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
 
   @impl true
-  def init(%{session: session, session_id: session_id, job: job, code: code}) do
+  def init(%{session: session, session_id: session_id, job: job, code: code, pid: pid}) do
+    # The ceiling is taken from the config HERE, and not at the firing of the timer: the config is
+    # read once at the launch of the job, so that an edit of the number does not move the deadline
+    # of a job that is already going. The same number goes into the line of the accounting.
+    limit = Application.fetch_env!(:sweet, :job_hard_limit_ms)
+
     # The record is established by the PROCESS of the job ITSELF: the owner of a record in `Registry` is the one
     # who established it, so with its death the record goes away by itself. To establish it from
     # the session would mean to keep the account on a process that the job outlives.
-    {:ok, _} = Registry.register(@registry, {session_id, job}, %{code: code, ask: nil})
+    {:ok, _} =
+      Registry.register(@registry, {session_id, job}, %{
+        code: code,
+        ask: nil,
+        pid: pid,
+        started_at: System.system_time(:millisecond),
+        limit_ms: limit
+      })
 
     # A job belongs to the session: its death is ours too. There are no abandoned
     # jobs, and the cleanup after a session is the responsibility of its own supervisor.
     session_ref = Process.monitor(session)
 
-    timer =
-      Process.send_after(self(), :overdue, Application.fetch_env!(:sweet, :job_hard_limit_ms))
+    timer = Process.send_after(self(), :overdue, limit)
 
     {:ok,
      %{

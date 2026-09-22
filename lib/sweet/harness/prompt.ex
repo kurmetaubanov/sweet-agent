@@ -440,6 +440,30 @@ defmodule Sweet.Harness.Prompt do
         }
       },
       %{
+        "name" => "job_list",
+        "description" => """
+        What background jobs exist right now, and in what state each of them is.
+        Two sources are stitched together here: the accounting of the brain (the
+        hash, the process, the launch and the hard limit) and the table of the
+        hand (the state of the process, how long it has been silent, whether it
+        waits for input). Their hashes and process numbers agree — one job is one
+        line.
+
+        The line carries the first line of what was launched, the pid INSIDE the
+        container of the hand, the launch time, the hard limit and the deadline.
+        The pid is a label, and not a handle: jobs are acted on by their HASH —
+        with `read_log`, `job_send`, `job_signal`. The code of a job is read
+        separately, by `read_log`.
+
+        A job marked as unknown to the brain was started from inside a cell
+        (`bash()`): the hand has it, the accounting of the brain does not.
+
+        The line "still running" comes to you at every turn by itself: this tool is
+        for the whole picture at once, and not for finding out that a job exists.
+        """,
+        "input_schema" => %{"type" => "object", "properties" => %{}}
+      },
+      %{
         "name" => "job_send",
         "description" => """
         Answer a background job that is waiting for input. The text goes to
@@ -630,7 +654,7 @@ defmodule Sweet.Harness.Prompt do
     How to run work that takes time — do this, not the loop:
     Work that takes time is a background job. `python` (a cell in the kernel), `bash` (a command in a shell) and `elixir` (a script in a fresh VM) answer at once with a job hash and wait for nothing: installs, builds, test suites, long downloads, crawls — anything you would otherwise poll with `sleep`. Their output comes to you later, as a message. `read_log`, `job_send` and `job_signal` answer with the result itself: they read a file, write a line, send a signal — there is nothing to wait for.
     Do not wait for a job by looping. End the turn, or do other useful work. The completion message arrives by itself with the exit code and the tail of the output.
-    Use `read_log` to read the output of a job, `job_send` to answer one that asks something, and `job_signal` to stop one job.
+    Use `read_log` to read the output of a job, `job_send` to answer one that asks something, `job_signal` to stop one job, and `job_list` to see every job at once — with its process, its launch and its deadline.
 
     A job that waits for input is not a job that is working. When a message says a job is waiting for input, answer it with `job_send` and carry on — or stop it with `job_signal` if the answer is not yours to give. Do not leave it standing: it holds a process and will never finish on its own. When a message says a job has been quiet for a long while, that is only a guess from silence — read the log with `read_log` and ask the human whether to kill it or give it more time.
 

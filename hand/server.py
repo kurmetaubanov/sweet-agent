@@ -246,6 +246,11 @@ class Job:
                 "job": self.id,
                 "code": self.code,
                 "cwd": self.cwd,
+                # The number of the process, if the job HAS one of its own. A cell of the kernel
+                # has none: it counts in the process of the hand, and to give out the number of the
+                # hand for it would be a lie — ten cells would show one number, and /proc by it
+                # would point at the hand itself. An empty number here means "there is no
+                # separate process", and not "the process is number zero".
                 "pid": self.pid,
                 "state": "running" if self.running else "exited",
                 "exit": self.exit_code,
@@ -360,7 +365,16 @@ class CellJob(Job):
     def start(self, send=None):
         os.makedirs(JOBDIR, exist_ok=True)
         self._log = open(self.log_path, "wb")
-        self.pid = os.getpid()
+
+        # A cell has NO process of its own: it counts in a thread of the hand, and the number
+        # of the hand is the same for all cells. Formerly it was written into `self.pid`, and the
+        # same number travelled to brain as "the pid of the job" — the model saw one process
+        # under ten different cells. An empty number says honestly that there is none.
+        #
+        # The events carry it the same way: in the hand it is not a signal that is sent to a cell
+        # (`CellJob.signal` interrupts the thread), and the number is not needed for the
+        # control — the checkout of the thread lives on in `_thread.ident`.
+        self.pid = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -888,9 +902,13 @@ def describe_job(state):
     if state["truncated"]:
         kept += f" of {state['bytes']} (log truncated)"
 
+    # A job without a process of its own (a cell of the kernel) does not get the word "pid" at all:
+    # "pid None" would read as a number that failed to be read.
+    pid = f"pid {state['pid']}, " if state.get("pid") else ""
+
     return (
         f"job {state['job']} [{how}]: {first}\n"
-        f"  pid {state['pid']}, {state['lines']} lines, {kept}, "
+        f"  {pid}{state['lines']} lines, {kept}, "
         f"rc: {rc}"
     )
 
@@ -1395,12 +1413,21 @@ def main():
                         }
                     )
             elif msg.get("op") == "job_list":
-                text = "\n".join(describe_job(job.poll()) for job in jobs.values()) or "(no jobs)"
+                # The state of every job goes to brain as STRUCTURE, and not as ready text: brain
+                # takes the line apart into parts (the process, the launch, the ceiling) and adds to
+                # them what the hand does not know — the code of the job and its question. The
+                # number of the process is here the same one that went off in the answer about the
+                # launch, therefore the two lines speak about one and the same job.
+                #
+                # The order is by the hash, as in the accounting of brain: the selection travels
+                # into the context, and from the order it would change for no reason at all.
+                states = [job.poll() for _jid, job in sorted(jobs.items())]
+
                 reply(
                     {
                         "kind": "result",
-                        "stdout": text,
-                        "result": None,
+                        "stdout": "",
+                        "result": states,
                         "error": "",
                         "namespace": namespace(shell),
                     }

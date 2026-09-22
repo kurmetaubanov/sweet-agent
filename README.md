@@ -78,7 +78,7 @@ does not even hear "stop". The task sends pieces of text to the session, and the
 session owns the hand and the mailbox — the task asks it for them. That is why
 `Sweet.cancel/1` works from a neighbouring IEx session.
 
-Six tools are available to the model, and all of them are executed in the hand:
+Seven tools are available to the model, and all of them are executed in the hand:
 
 | Tool | What it does |
 |---|---|
@@ -86,6 +86,7 @@ Six tools are available to the model, and all of them are executed in the hand:
 | `elixir` | a script in a fresh VM |
 | `bash` | a command in a shell |
 | `read_log` | read a job's log (`head`, `tail`, `grep`) |
+| `job_list` | see every running job at once: its process, its launch, its hard limit and its deadline |
 | `job_send` | answer a job that waits for input |
 | `job_signal` | send a signal to one job — the kernel and the rest of the work stay intact |
 

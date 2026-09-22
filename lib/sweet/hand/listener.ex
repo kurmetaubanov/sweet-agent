@@ -94,6 +94,18 @@ defmodule Sweet.Hand.Listener do
   end
 
   @doc """
+  What the hand is doing at all: one line per background job, with the process, the time and the
+  first line of the code (see `describe_job/1` in the hand).
+
+  This is the answer, and not `job_read` by every job one by one: the hand has its own table of
+  jobs — one pass over it gives the whole picture, including jobs that brain does not know
+  (they are started from inside a cell — see `bash()` in the handout).
+  """
+  def job_list(conn, timeout) do
+    request(conn, %{op: "job_list"}, timeout)
+  end
+
+  @doc """
   Send a request and wait for an answer frame.
 
   Not only the hand uses this same connection: the embedder lives in its own

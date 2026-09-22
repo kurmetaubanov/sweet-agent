@@ -90,6 +90,21 @@ defmodule Sweet.Hand do
     :exit, {:noproc, _} -> {:error, :hand_gone}
   end
 
+  @doc """
+  What the hand is doing at all — every background job it knows, one line each.
+
+  Not the same as `Sweet.Job.list/1` of the brain: the hand holds the processes, and it sees also
+  the jobs that the brain does not know — those started from inside a cell (`bash()`). The brain's
+  account has the code of the job; the hand's one has the process and the time. Both lines speak
+  about one and the same job, and their hashes agree.
+  """
+  def job_list(%__MODULE__{pid: pid}) do
+    GenServer.call(pid, {:job_list}, 30_000)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:noproc, _} -> {:error, :hand_gone}
+  end
+
   @doc "Send text into the stdin of a background job: that is how one answers a prompt."
   def job_send(%__MODULE__{pid: pid}, job, text) do
     GenServer.call(pid, {:job_send, job, text}, 30_000)
@@ -329,6 +344,11 @@ defmodule Sweet.Hand do
 
   def handle_call({:job_read, payload}, from, state) do
     relay(from, fn -> Sweet.Hand.Listener.job_read(state.conn, payload, 30_000) end)
+    {:noreply, state}
+  end
+
+  def handle_call({:job_list}, from, state) do
+    relay(from, fn -> Sweet.Hand.Listener.job_list(state.conn, 30_000) end)
     {:noreply, state}
   end
 

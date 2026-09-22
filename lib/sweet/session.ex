@@ -725,6 +725,10 @@ defmodule Sweet.Session do
     "read_log #{input["job"]}"
   end
 
+  # The list of jobs has no parameters: the generic branch below would glue "{}" to the
+  # name as if it meant something.
+  defp tool_note(%{"name" => "job_list"}, _result), do: "job_list"
+
   # A question to one's own memory. The QUERY travels into the trace, and not the summary of the
   # answer: the query is what this call is recognized by and what it is later found by.
   defp tool_note(%{"name" => "recall", "input" => input}, _result) do
@@ -859,6 +863,49 @@ defmodule Sweet.Session do
     ask(id, state, session, fn hand -> Sweet.Hand.job_read(hand, payload) end)
   end
 
+  # What the hand is doing at all. Two sources, and one line out of them:
+  #
+  #   * the accounting of the BRAIN (`Sweet.Job.list/1`) — the hash, the number of the process, the
+  #     launch, the ceiling and what was launched;
+  #   * the table of the HAND (`job_list` in the handout) — what state each process is in right now
+  #     and how long ago it last spoke.
+  #
+  # The hashes agree, and the numbers of the processes too (the hand gives out the number at the
+  # launch, and the brain writes it into the accounting), therefore the two lines speak about one and
+  # the same job. The hand also sees jobs the brain does NOT know — those started from inside a
+  # cell (`bash()`): the line about them comes without a hash of the brain.
+  #
+  # The line is assembled by `Sweet.Job.line/1` here, and by the hand — `describe_job/1` there. They
+  # are assembled in one order and out of the same parts on purpose: a second picture of one state
+  # would be a second truth.
+  defp run_tool(%{"id" => id, "name" => "job_list", "input" => input}, state, session) do
+    send(session, {:tool, "job_list", "tool"})
+    Logger.info("job_list call, jobs_in_hand: #{inspect(input)}")
+
+    ours = Map.new(Sweet.Job.list(state.id), &{&1.job, &1})
+
+    case ensure_hand(session) do
+      {:ok, hand} ->
+        case Sweet.Hand.job_list(hand) do
+          {:ok, %{"result" => jobs, "error" => ""}} when is_list(jobs) ->
+            {tool_result(id, job_list_text(ours, jobs)), state}
+
+          {:ok, %{} = answer} ->
+            {tool_result(id, "the hand answered with something else: #{inspect(answer)}", true), state}
+
+          {:error, reason} ->
+            hand_broken(session, hand, reason)
+            {tool_result(id, "the hand is unavailable: #{inspect(reason)}", true), state}
+
+          other ->
+            {tool_result(id, "unexpected answer from the hand: #{inspect(other)}", true), state}
+        end
+
+      {:error, reason} ->
+        {tool_result(id, "the hand is unavailable: #{inspect(reason)}", true), state}
+    end
+  end
+
   # A signal into the process group of ONE job. The kernel and the rest of the work are intact —
   # that is the difference from /stop, which kills the hand entirely.
   defp run_tool(%{"id" => id, "name" => "job_signal", "input" => input}, state, session) do
@@ -978,6 +1025,11 @@ defmodule Sweet.Session do
     end
   end
 
+  # The number of the process inside the container of the hand. An old hand may not give it at all —
+  # then the accounting says nothing about the process, and the line simply has no "pid" in it.
+  defp pid_of(%{"pid" => pid}) when is_integer(pid), do: pid
+  defp pid_of(_answer), do: nil
+
   # The launch of a job: for the cell and for the shell command it is one and the same. The difference
   # is only in which operation of the hand this is done by — and it comes
   # as an argument. The model's answer is the same: the job's hash, and that is all.
@@ -990,7 +1042,7 @@ defmodule Sweet.Session do
     case ensure_hand(session) do
       {:ok, hand} ->
         case start.(hand) do
-          {:ok, %{"job" => job}} ->
+          {:ok, %{"job" => job} = answer} ->
             started = with_reminder("job started in background, #{job}", state)
 
             # The job is taken into account BY ITS OWN PROCESS, and not by a record in the
@@ -998,7 +1050,12 @@ defmodule Sweet.Session do
             # writes into `state` will die together with the task. The accounting, the job's deadline and
             # the question by which it asks live in Sweet.Job — and it is written there
             # why.
-            Sweet.Job.start(session, state.id, job, code)
+            #
+            # The number of the process comes from THIS answer, and not from a separate request: the
+            # hand gives it out together with the hash, and it is the same number that it will show
+            # later in the list of its jobs. It is a LABEL for matching the two accounts up,
+            # not a handle (see Sweet.Job.start/5).
+            Sweet.Job.start(session, state.id, job, code, pid_of(answer))
             {tool_result(id, started), state}
 
           {:ok, %{"error" => error}} when is_binary(error) and error != "" ->
@@ -1088,6 +1145,64 @@ defmodule Sweet.Session do
       end)
 
     String.trim("read_log #{input["job"]} #{args}")
+  end
+
+  # The whole picture at once: the accounting of the brain and the state from the hand, stitched by
+  # the hash of the job. A job of the hand that the brain does not know is shown all the same — with
+  # the first line of its code, which the hand remembers by itself.
+  #
+  # The time from the hand is added to the line of the brain, and not put in its place: the clock of
+  # the brain counts the whole life of a job (the ceiling is counted by it), while the hand answers
+  # about its own process — "it is running, it is waiting for input, it has been silent for so long".
+  @doc false
+  def job_list_text(ours, jobs) do
+    if jobs == [] do
+      "there are no background jobs: neither in the accounting nor in the hand."
+    else
+      Enum.map_join(jobs, "\n", &job_list_line(ours, &1))
+    end
+  end
+
+  defp job_list_line(ours, state) do
+    job = state["job"]
+
+    line =
+      case ours do
+        %{^job => record} ->
+          Sweet.Job.line(record)
+
+        _ ->
+          # Two reasons at once: a job started from inside a cell (`bash()`) never gets into the
+          # accounting of the brain, while a job that has just ended is already taken off it. The
+          # first says so itself; the second answers "it is over" by its own state.
+          note =
+            if state["state"] == "running",
+              do: "it was started from inside a cell",
+              else: "it is over, or it was started from inside a cell"
+
+          "job #{job}  (the hand knows it, the brain does not: #{note})"
+      end
+
+    line <> hand_part(state)
+  end
+
+  # What the hand says about the process: the state, how long it has lived, how long it has been
+  # silent, whether it waits for input and what it asks with.
+  defp hand_part(%{"state" => "running"} = state) do
+    how = "running #{state["runtime_s"]} s"
+    how = if state["quiet_s"] > 10, do: how <> ", quiet for #{state["quiet_s"]} s", else: how
+
+    ask =
+      case state["ask"] do
+        ask when is_binary(ask) and ask != "" -> "\n  waiting for input: #{first_line(ask)}"
+        _ -> ""
+      end
+
+    "\n  #{how}#{ask}"
+  end
+
+  defp hand_part(state) do
+    "\n  finished in #{state["runtime_s"]} s, exit code #{state["exit"]}"
   end
 
   @doc false
@@ -1239,18 +1354,14 @@ defmodule Sweet.Session do
     # the turn goes on in a task — a record from there would land in someone else's copy of the state.
     jobs = Sweet.Job.list(state.id)
 
-    running =
+        running =
       case jobs do
         [] ->
           ""
 
         _ ->
-          "
-
-still running: " <> Enum.map_join(jobs, ", ", &"job #{&1.job}")
-      end
-
-    # About a job that waits for an answer we remind NOT ONLY in the event about it.
+          "\n\nstill running: " <> Enum.map_join(jobs, "\n  ", &Sweet.Job.line/1)
+      end# About a job that waits for an answer we remind NOT ONLY in the event about it.
     # The event comes once, while the mailbox is taken at every boundary of a round:
     # without this line the model, having seen a question at the beginning of the turn and having answered
     # something else later, will not remember about it any more.

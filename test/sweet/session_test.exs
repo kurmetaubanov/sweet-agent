@@ -493,6 +493,62 @@ defmodule Sweet.SessionTest do
     refute gone =~ "question:"
   end
 
+  # --- The list of jobs: the accounting of the brain stitched together with the table of the hand ---
+
+  test "the line of a job carries the process, the launch and the deadline" do
+    started = 1_700_000_000_000
+
+    record = %{
+      job: "a1b2c3",
+      code: "sleep 60",
+      ask: nil,
+      pid: 4242,
+      started_at: started,
+      limit_ms: 1_800_000
+    }
+
+    line = Sweet.Job.line(record)
+
+    # The launch is shown as a clock time, and not as a number of milliseconds: this line is read
+    # by a person and a model, and neither of them counts milliseconds.
+    assert line =~ "job a1b2c3"
+    assert line =~ "pid 4242"
+    assert line =~ "started 22:13:20Z"
+    assert line =~ "hard limit 30 m 0 s"
+    assert line =~ "deadline 22:43:20Z"
+
+    # A job without a number of a process: the word "pid" is not there at all, otherwise an empty
+    # place would read as a process that failed to be read.
+    refute Sweet.Job.line(%{record | pid: nil}) =~ "pid"
+  end
+
+  test "the list of jobs takes the state from the hand and the rest from the brain", %{session: session, id: id} do
+    running_job(session, id, "j1")
+
+    hand = [
+      %{"job" => "j1", "state" => "running", "runtime_s" => 12.3, "quiet_s" => 40.5, "ask" => "", "exit" => nil},
+      %{"job" => "j2", "state" => "running", "runtime_s" => 2.0, "quiet_s" => 0.5, "ask" => "", "exit" => nil}
+    ]
+
+    text = Sweet.Session.job_list_text(Map.new(jobs(id), &{&1.job, &1}), hand)
+
+    assert text =~ "job j1"
+    assert text =~ "running 12.3 s, quiet for 40.5 s"
+    assert text =~ "hard limit"
+
+    # A job the brain does not know — started from inside a cell. It is in the list all the same:
+    # the hand holds the process and knows that it is running.
+    assert text =~ "job j2"
+    assert text =~ "from inside a cell"
+
+    # A hush shorter than ten seconds is not worth a word: the hand also keeps silent about it.
+    refute text =~ "quiet for 0.5 s"
+  end
+
+  test "an empty list says so, and does not return an empty line" do
+    assert Sweet.Session.job_list_text(%{}, []) =~ "there are no background jobs"
+  end
+
   test "job_signal names the command it puts out", %{session: session, id: id} do
     running_job(session, id, "j1")
 
