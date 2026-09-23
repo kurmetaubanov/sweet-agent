@@ -185,18 +185,56 @@ defmodule Sweet.Harness.Prompt do
   # placed in time: yesterday's conversation from another chat looks exactly
   # as today's, and the model takes the past for the present.
   defp here_and_now(state) do
-    "Now: #{stamp(System.os_time(:second))}. This session: #{state.id}."
+    # One reading of the clock for both stamps: two of them, taken separately, part at the minute
+    # boundary — and the line would say two different minutes about one and the same instant.
+    utc = DateTime.from_unix!(System.os_time(:second))
+
+    "Now: #{stamp(utc)}#{host_stamp(utc, Sweet.HostTime.offset())}. This session: #{state.id}."
   end
+
+  # The same instant in the clocks of the host, in brackets next to UTC. Both the offset and the time
+  # itself are there deliberately: by the offset alone one cannot check what the clock shows, and the
+  # offset gives what the date in the brackets does not — the DELTA from UTC, which is the same for
+  # every session and does not need to be recounted.
+  #
+  # The DATE is printed too, and not only the hours: west of UTC the day is yesterday, east of it the
+  # next one, and the model that sees only the hours takes the date from the UTC part — and is wrong
+  # by a whole day.
+  #
+  # No offset — no brackets at all. Empty brackets or `+00:00` would be a lie: they assert that the
+  # host stands in UTC, while what they mean is that we do not know where it stands.
+  #
+  # Open (`@doc false`) for the sake of checks: the function is pure, and there is nothing else
+  # to check the branches with — the turn would have to raise docker and the model for the sake of
+  # a line of text.
+  @doc false
+  def host_stamp(_utc, nil), do: ""
+
+  def host_stamp(utc, offset) do
+    shifted = DateTime.add(utc, offset, :second)
+    " (#{offset_stamp(offset)}, host time #{Calendar.strftime(shifted, "%Y-%m-%d %H:%M")})"
+  end
+
+  # `+07:00`, and not `25200`: the offset in seconds is read by nobody, while the hours and minutes
+  # in the brackets are what the person themselves would say. The sign is taken from the sign of the
+  # whole offset, therefore the minutes of a negative half-hour zone do not turn +.
+  defp offset_stamp(offset) do
+    abs_offset = abs(offset)
+    "#{if offset < 0, do: "-", else: "+"}#{two(div(abs_offset, 3600))}:#{two(rem(div(abs_offset, 60), 60))}"
+  end
+
+  defp two(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 
   # The time of all marks is one — UTC. The container's time zone may change
   # after a rebuild, and then the old records would turn out to be in a different time than
   # the new ones — silently and without a single sign.
   defp stamp(nil), do: "time unknown"
+  defp stamp(%DateTime{} = utc), do: Calendar.strftime(utc, "%Y-%m-%d %H:%M UTC")
 
   defp stamp(unix) do
     unix
     |> DateTime.from_unix!()
-    |> Calendar.strftime("%Y-%m-%d %H:%M UTC")
+    |> stamp()
   end
 
   defp block(_title, ""), do: ""

@@ -190,14 +190,25 @@ defmodule Sweet.Hand.Docker do
     request("GET", "#{@api}/containers/#{id}/logs?stdout=true&stderr=true&tail=200", nil)
   end
 
+  # What the daemon thinks about itself. SystemTime in the answer is the clock of the DAEMON, and
+  # the daemon works on the host: from inside a container this is the only way to see the zone of the
+  # host — brain has its own (UTC). The filter lets this route through as it is
+  # (see docker-filter/proxy.py, the route "info").
+  # The timeout is a parameter, and not the usual thirty seconds: the zone of the host is asked for
+  # on every turn (see Sweet.HostTime), and a turn must not stand on the daemon. No answer in
+  # a couple of seconds — the host time is simply unknown.
+  def info(timeout_ms) do
+    request("GET", "#{@api}/info", nil, timeout_ms)
+  end
+
   # --- Transport ---
 
-  defp request(method, path, body) do
+  defp request(method, path, body, timeout_ms \\ 30_000) do
     payload = if body, do: JSON.encode!(body), else: ""
     headers = [{"content-type", "application/json"}, {"host", "docker"}]
 
     case connect() do
-      {:ok, conn} -> talk(conn, method, path, headers, payload)
+      {:ok, conn} -> talk(conn, method, path, headers, payload, timeout_ms)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -206,10 +217,10 @@ defmodule Sweet.Hand.Docker do
   # `close/1`, and the socket remained open until the death of the caller. This held
   # for a short time — the caller is a short-lived task — and that is why it did not catch the
   # eye; but the one who opened must clean up after themselves, and not the garbage collector.
-  defp talk(conn, method, path, headers, payload) do
+  defp talk(conn, method, path, headers, payload, timeout_ms) do
     result =
       with {:ok, conn, ref} <- Mint.HTTP.request(conn, method, path, headers, payload),
-           {:ok, _conn, status, resp} <- recv(conn, ref) do
+           {:ok, _conn, status, resp} <- recv(conn, ref, nil, "", [], timeout_ms) do
         {:ok, status, decode(resp)}
       else
         {:error, reason} -> {:error, reason}
@@ -239,7 +250,7 @@ defmodule Sweet.Hand.Docker do
   #
   # Therefore we accumulate foreign messages and return them to our mailbox when the request is finished:
   # the order is preserved, the messages are handled in the usual way.
-  defp recv(conn, ref, status \\ nil, acc \\ "", stashed \\ []) do
+  defp recv(conn, ref, status, acc, stashed, timeout_ms) do
     receive do
       message ->
         case Mint.HTTP.stream(conn, message) do
@@ -250,7 +261,7 @@ defmodule Sweet.Hand.Docker do
               restore(stashed)
               {:ok, conn, status, acc}
             else
-              recv(conn, ref, status, acc, stashed)
+              recv(conn, ref, status, acc, stashed, timeout_ms)
             end
 
           {:error, _conn, reason, _} ->
@@ -258,10 +269,10 @@ defmodule Sweet.Hand.Docker do
             {:error, reason}
 
           :unknown ->
-            recv(conn, ref, status, acc, [message | stashed])
+            recv(conn, ref, status, acc, [message | stashed], timeout_ms)
         end
     after
-      30_000 ->
+      timeout_ms ->
         restore(stashed)
         {:error, :docker_timeout}
     end

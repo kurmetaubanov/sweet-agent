@@ -227,6 +227,57 @@ defmodule Sweet.SessionTest do
     refute found_skill =~ "<<<"
   end
 
+  # --- The time of the host in the prompt ---
+
+  # The same instant is printed twice: in UTC and in the clock of the host. The date in the second
+  # one comes out of the same arithmetic, and it is printed deliberately — east of UTC the day has
+  # already changed, and by hours alone the model would take the date of the UTC part.
+  test "the brackets carry the offset and the time of the host" do
+    utc = ~U[2026-09-23 17:34:00Z]
+
+    assert Sweet.Harness.Prompt.host_stamp(utc, 7 * 3600) == " (+07:00, host time 2026-09-24 00:34)"
+    # A negative offset is not a mirror of a positive one: the sign is common for the whole
+    # offset, therefore the minutes do not turn into plus on the way.
+    assert Sweet.Harness.Prompt.host_stamp(utc, -(5 * 3600)) == " (-05:00, host time 2026-09-23 12:34)"
+    assert Sweet.Harness.Prompt.host_stamp(utc, 5 * 3600 + 45 * 60) == " (+05:45, host time 2026-09-23 23:19)"
+    assert Sweet.Harness.Prompt.host_stamp(utc, -(7 * 3600 + 30 * 60)) ==
+             " (-07:30, host time 2026-09-23 10:04)"
+  end
+
+  # The host stands in UTC — and this is knowledge, and not its absence: the brackets stay.
+  test "a zero offset is still a known time of the host" do
+    assert Sweet.Harness.Prompt.host_stamp(~U[2026-09-23 17:34:00Z], 0) ==
+             " (+00:00, host time 2026-09-23 17:34)"
+  end
+
+  # The daemon did not answer — the host time is unknown, and the line stays exactly as it was
+  # before: no brackets, no empty brackets, no `+00:00`. Both of those would be a lie of the same
+  # sort: they assert that the host stands in UTC.
+  test "without an offset the host time is not printed at all" do
+    assert Sweet.Harness.Prompt.host_stamp(~U[2026-09-23 17:34:00Z], nil) == ""
+  end
+
+  # The format of the daemon is a whole ISO-8601 stamp with the offset of the host on the tail, and
+  # the offset is hidden in it by the standard itself — neither a regexp nor a time zone base is
+  # needed. The name of the zone is deliberately NOT derived from the offset: a dozen zones answer
+  # for `+07:00`, and to name one of them means to guess in the prompt.
+  test "the offset of the host is read out of the stamp of the daemon" do
+    assert Sweet.HostTime.offset_from_system_time("2026-09-23T20:28:27.896984488+07:00") == 7 * 3600
+    assert Sweet.HostTime.offset_from_system_time("2026-09-23T20:28:27+05:45") == 5 * 3600 + 45 * 60
+    assert Sweet.HostTime.offset_from_system_time("2026-09-23T13:28:27Z") == 0
+    assert Sweet.HostTime.offset_from_system_time("2026-09-23T08:28:27-05:00") == -5 * 3600
+  end
+
+  # An answer we do not understand is not an answer: an older daemon, a truncated stamp, a foreign
+  # type. A guessed offset would go into the prompt as the time of the host, while it is unknown.
+  test "a stamp that cannot be read gives an unknown offset" do
+    assert Sweet.HostTime.offset_from_system_time("2026-09-23T13:28:27") == nil
+    assert Sweet.HostTime.offset_from_system_time("not a time") == nil
+    assert Sweet.HostTime.offset_from_system_time("") == nil
+    assert Sweet.HostTime.offset_from_system_time(nil) == nil
+    assert Sweet.HostTime.offset_from_system_time(1_774_246_907) == nil
+  end
+
   # --- The paragraph about leave for creations, deletions and edits ---
 
   # The rule stands in the constant core of the prompt and is glued to the reply of the person.
