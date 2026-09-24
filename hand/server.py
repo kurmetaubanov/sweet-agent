@@ -1421,7 +1421,18 @@ def main():
                 #
                 # The order is by the hash, as in the accounting of brain: the selection travels
                 # into the context, and from the order it would change for no reason at all.
-                states = [job.poll() for _jid, job in sorted(jobs.items())]
+                # The table keeps every job ever started — the log is read by hash, and a log
+                # must not vanish together with its process. The LIST, however, is about what is
+                # alive NOW (see the description of the tool): a finished job in it is a line the
+                # model cannot act on, and it grows without limit through a long session. So the
+                # dead are filtered out here, in the answer, and not thrown out of the table:
+                # `read_log` of a finished job keeps working.
+                #
+                # The filter also closes the opposite hole: a record of brain is taken off the
+                # accounting only in this same place (`forget_missing/3` of session.ex), and that
+                # one drops what the hand did NOT answer about. An end-of-job event lost on the
+                # way left such a record to live as "still running" until the hand died.
+                states = [job.poll() for _jid, job in sorted(jobs.items()) if job.running]
 
                 reply(
                     {
