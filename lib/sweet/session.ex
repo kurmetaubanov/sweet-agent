@@ -1042,34 +1042,45 @@ defmodule Sweet.Session do
   # by it earlier than the hand answers (see `with_job/2`). The hand answers with the same
   # name, and we check against the answer, and not against our own expectation — the name in
   # the answer is the one under which the job lives.
-  defp start_job(id, _job, state, session, start, code) do
+  defp start_job(id, job, state, session, start, code) do
     case ensure_hand(session) do
       {:ok, hand} ->
+        # The job is taken into account BY ITS OWN PROCESS, and not by a record in the
+        # state: this function runs in the task of the turn, and everything it
+        # writes into `state` will die together with the task. The accounting, the job's deadline and
+        # the question by which it asks live in Sweet.Job — and it is written there
+        # why.
+        #
+        # The record is established BEFORE the request, as `make_ref()` before `send`: the name is
+        # ours, the hand starts the job under it, and `start_child` returns only after `init` has
+        # registered it. The answer comes to this task, while "finished" comes to the session — two
+        # different ways with no order between them; formerly a short job ended before the record
+        # appeared, the end found nothing, and the late record fired the ceiling half an hour later.
+        # Now the end cannot overtake the record: there is no job in the hand before the request.
+        Sweet.Job.start(session, state.id, job, code)
+
         case start.(hand) do
-          {:ok, %{"job" => job} = answer} ->
+          {:ok, %{"job" => ^job} = answer} ->
             started = with_reminder("job started in background, #{job}", state)
 
-            # The job is taken into account BY ITS OWN PROCESS, and not by a record in the
-            # state: this function runs in the task of the turn, and everything it
-            # writes into `state` will die together with the task. The accounting, the job's deadline and
-            # the question by which it asks live in Sweet.Job — and it is written there
-            # why.
-            #
             # The number of the process comes from THIS answer, and not from a separate request: the
             # hand gives it out together with the hash, and it is the same number that it will show
             # later in the list of its jobs. It is a LABEL for matching the two accounts up,
-            # not a handle (see Sweet.Job.start/5).
-            Sweet.Job.start(session, state.id, job, code, pid_of(answer))
+            # not a handle (see Sweet.Job.label/3).
+            Sweet.Job.label(state.id, job, pid_of(answer))
             {tool_result(id, started), state}
 
           {:ok, %{"error" => error}} when is_binary(error) and error != "" ->
+            Sweet.Job.finish(state.id, job)
             {tool_result(id, "the hand did not start the job: " <> error, true), state}
 
           {:error, reason} ->
+            Sweet.Job.finish(state.id, job)
             hand_broken(session, hand, reason)
             {tool_result(id, "the hand is unavailable: #{inspect(reason)}", true), state}
 
           other ->
+            Sweet.Job.finish(state.id, job)
             {tool_result(id, "unexpected answer from the hand: #{inspect(other)}", true), state}
         end
 

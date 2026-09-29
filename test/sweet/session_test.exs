@@ -432,6 +432,28 @@ defmodule Sweet.SessionTest do
     assert [%{job: "j1"}] = jobs(id)
   end
 
+  # A short job ends before the hand's answer reaches the turn. The record is established before
+  # the request (see `start_job` in Sweet.Session), so "finished" finds it and takes it off; the
+  # late label of the answer only updates and must not bring the record back — otherwise its
+  # ceiling fires half an hour later about a job that is long over.
+  test "a job that ended before the answer of the hand leaves no record behind", %{session: session, id: id} do
+    previous = Application.get_env(:sweet, :job_hard_limit_ms)
+    Application.put_env(:sweet, :job_hard_limit_ms, 50)
+    on_exit(fn -> Application.put_env(:sweet, :job_hard_limit_ms, previous) end)
+
+    fake_turn(session, nil)
+    running_job(session, id, "j1")
+
+    send(session, {:hand_event, %{"kind" => "job", "event" => "finished", "job" => "j1", "exit" => 0}})
+    wait_for_state(session, fn _ -> jobs(id) == [] end)
+
+    Sweet.Job.label(id, "j1", 4242)
+    Process.sleep(100)
+
+    assert jobs(id) == []
+    refute Enum.any?(:sys.get_state(session).inbox, &(&1.text =~ "running past its limit"))
+  end
+
   test "a ceiling on a closed job goes nowhere", %{session: session} do
     # A set timer goes away together with the job, and it cannot arrive in such a form
     # by construction. The check remains for one case — the job went away

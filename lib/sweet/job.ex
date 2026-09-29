@@ -173,6 +173,13 @@ defmodule Sweet.Job do
   def resumed(session_id, job), do: cast(session_id, job, :resumed)
 
   @doc """
+  The number of the process inside the hand, known only from its answer — after the record exists.
+  If the job is already over, there is no record, and the label goes nowhere: it only updates,
+  it never creates.
+  """
+  def label(session_id, job, pid), do: cast(session_id, job, {:label, pid})
+
+  @doc """
   A job is over. The cleanup of the account is the business of the session, and not of the handler of the event, and
   by a separate function: the event about the end may not arrive (the hand died), while
   the record must go away.
@@ -254,6 +261,11 @@ defmodule Sweet.Job do
 
   def handle_cast(:resumed, state) do
     update(state, nil)
+    {:noreply, state}
+  end
+
+  def handle_cast({:label, pid}, state) do
+    Registry.update_value(@registry, {state.session_id, state.job}, &Map.put(&1, :pid, pid))
     {:noreply, state}
   end
 
