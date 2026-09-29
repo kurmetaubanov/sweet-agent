@@ -1169,7 +1169,14 @@ defmodule Sweet.Telegram do
   #
   # The polling of updates is excluded from this rule: its timeouts are an ordinary thing
   # with long polling, and the polling itself already speaks about them.
-  defp request(method, params) do
+  #
+  # A 429 is not a failure but a "later": Telegram names how many seconds to wait. Formerly it was
+  # logged and dropped — a thousand jobs started at once lost hundreds of lines. Now the sender
+  # sleeps for `retry_after` and repeats; the sender is the process of the chat, so the sleep is
+  # a queue in its mailbox, and the order of the lines is kept.
+  @retry_attempts 5
+
+  defp request(method, params, attempt \\ 1) do
     url = @api <> token() <> "/" <> method
 
     :post
@@ -1179,6 +1186,12 @@ defmodule Sweet.Telegram do
       {:ok, %{status: 200, body: body}} ->
         JSON.decode(body)
 
+      {:ok, %{status: 429, body: body}} when attempt < @retry_attempts ->
+        seconds = retry_after(body)
+        Logger.info("telegram #{method}: 429, retry in #{seconds} s (attempt #{attempt})")
+        Process.sleep(seconds * 1000)
+        request(method, params, attempt + 1)
+
       {:ok, %{status: status, body: body}} ->
         log_failure(method, "#{status}: #{String.slice(body, 0, 300)}")
         {:error, {status, body}}
@@ -1186,6 +1199,13 @@ defmodule Sweet.Telegram do
       {:error, reason} ->
         log_failure(method, inspect(reason))
         {:error, reason}
+    end
+  end
+
+  defp retry_after(body) do
+    case JSON.decode(body) do
+      {:ok, %{"parameters" => %{"retry_after" => seconds}}} when is_integer(seconds) -> seconds
+      _ -> 1
     end
   end
 
