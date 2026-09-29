@@ -368,8 +368,12 @@ class CellJob(Job):
         super().__init__(jid, code)
         self._shell = shell
         self._send = send
-        self._alive = True
         self._thread = None
+        # Whether the frame about the end has gone off, and whether the cell was interrupted. The
+        # first is taken under the lock BEFORE the sending, so the thread and the watchdog cannot
+        # both send it; the second gives the return code to a thread that died without writing one.
+        self._reported = False
+        self._interrupted = False
 
     def start(self, send=None):
         os.makedirs(JOBDIR, exist_ok=True)
@@ -403,8 +407,9 @@ class CellJob(Job):
         # the frame — can still raise: "Too many open files" when descriptors run out, or the
         # KeyboardInterrupt of `interrupt()`, which lands at any bytecode, not only inside the cell.
         # Formerly such an exception killed the thread before `_alive` was dropped: the cell stayed
-        # "running" for ever, and a signal had no thread to reach. Now any way out of the thread
-        # is the end of the cell.
+        # "running" for ever, and a signal had no thread to reach. Now the life of the cell IS the
+        # life of the thread (see `running`), and the end is reported by `_report` — here at once,
+        # or by the watchdog if the thread died before it got here, even inside `finally`.
         frame = {}
         code = 1
 
@@ -431,13 +436,27 @@ class CellJob(Job):
             log(f"cell {self.id} fell outside the cell:\n{traceback.format_exc()}")
         finally:
             with self._lock:
-                self._alive = False
                 self.exit_code = code
                 self.ended_at = time.time()
                 if not self._log.closed:
                     self._log.close()
 
+        self._report(frame.get("namespace"))
+
+    def _report(self, namespace=None):
+        """The frame about the end, exactly once — from the thread itself or from the watchdog."""
         with self._lock:
+            if self._reported:
+                return
+            self._reported = True
+
+            if self.exit_code is None:
+                self.exit_code = -2 if self._interrupted else 1
+            if self.ended_at is None:
+                self.ended_at = time.time()
+            if not self._log.closed:
+                self._log.close()
+
             runtime = round(self.ended_at - self.started_at, 1)
             tail = self._tail
 
@@ -454,7 +473,7 @@ class CellJob(Job):
                     "bytes": self.bytes_total,
                     "head": self.head(EVENT_HEAD),
                     "tail": tail,
-                    "namespace": frame.get("namespace"),
+                    "namespace": namespace,
                 }
             )
         except BaseException:
@@ -489,13 +508,22 @@ class CellJob(Job):
 
     @property
     def running(self):
-        return self._alive
+        # The fact, and not a flag the dying thread must remember to drop: a thread killed at any
+        # bytecode is simply not alive, and the cell is over with it — the same as a monitor in OTP
+        # learns of a death not from the one who died.
+        return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def unreported(self):
+        """The thread is gone, and the frame about the end has not gone off."""
+        return self._thread is not None and not self._thread.is_alive() and not self._reported
 
     def send(self, text):
         raise RuntimeError(f"{self.id}: cell has no stdin")
 
     def signal(self, sig):
-        if self._alive and self._thread is not None:
+        if self.running:
+            self._interrupted = True
             interrupt(self._thread)
 
     def wait(self, timeout=None):
@@ -780,6 +808,13 @@ def watch_jobs():
 
         with _job_lock:
             running = [job for job in jobs.values() if job.running]
+            orphans = [job for job in jobs.values() if isinstance(job, CellJob) and job.unreported]
+
+        # A cell whose thread died before it could say so (see CellJob._run): its end is
+        # reported from here.
+        for job in orphans:
+            log(f"cell {job.id}: the thread died without a frame about the end — reporting it")
+            job._report()
 
         if not running:
             continue
