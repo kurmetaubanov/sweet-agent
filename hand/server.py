@@ -207,11 +207,19 @@ class Job:
 
                 self._tail = (self._tail + chunk.decode("utf-8", "replace"))[-TAIL_KEEP:]
 
+        # The stream is closed: the process and all its children are gone, nobody else
+        # touches these two. The job stays in the table for read_log, which opens the log
+        # by its path — so the descriptors are released here, not with the job.
+        with self._lock:
+            self._proc.stdout.close()
+            self._log.close()
+
     def _wait(self, send):
         """Waits for the return code from the PROCESS and tells brain that the job is over."""
         code = self._proc.wait()
 
         with self._lock:
+            self._proc.stdin.close()
             self.exit_code = code
             self.ended_at = time.time()
             runtime = round(self.ended_at - self.started_at, 1)
@@ -310,11 +318,12 @@ class Job:
 
     def send(self, text):
         """To answer a prompt inside a job: that is how interactivity comes alive."""
-        if self._proc is None or self._proc.poll() is not None:
-            raise RuntimeError(f"{self.id}: the job has already finished")
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None or self._proc.stdin.closed:
+                raise RuntimeError(f"{self.id}: the job has already finished")
 
-        self._proc.stdin.write(text.encode())
-        self._proc.stdin.flush()
+            self._proc.stdin.write(text.encode())
+            self._proc.stdin.flush()
 
     def signal(self, sig):
         if self.pid and self.running:
@@ -399,6 +408,8 @@ class CellJob(Job):
             text += ("\n" if text else "") + frame["error"]
 
         self._absorb(text)
+        with self._lock:
+            self._log.close()
 
         # The return code: a cell with `%%bash` has its own, a real one, and it must be
         # taken. An ordinary Python cell has no return code — then it is
