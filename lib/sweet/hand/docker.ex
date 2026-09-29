@@ -71,6 +71,13 @@ defmodule Sweet.Hand.Docker do
         "Memory" => Keyword.get(opts, :memory, cfg[:hand_memory_bytes]),
         "NanoCpus" => Keyword.get(opts, :nano_cpus, cfg[:hand_nano_cpus]),
         "PidsLimit" => cfg[:hand_pids_limit],
+        # A running job holds three descriptors (log, stdout, stdin); under the default soft
+        # limit of 1024 the hand stops at ~340 jobs at once with "Too many open files".
+        "Ulimits" => [%{"Name" => "nofile", "Soft" => 8192, "Hard" => 8192}],
+        # PID 1 of the hand is server.py, and it reaps only its own children: whatever a job
+        # leaves in the background is reparented to it and stays a zombie, eating PidsLimit.
+        # With Init docker puts tini at PID 1, and tini reaps the orphans.
+        "Init" => true,
         "AutoRemove" => false
       }
     }

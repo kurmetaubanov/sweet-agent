@@ -398,46 +398,67 @@ class CellJob(Job):
         # Now cells go off as jobs, and the model has the right to start two in a row;
         # so a queue is needed here. It does not hold the turn: it is the job thread that waits,
         # and not the head.
-        with _kernel_lock:
-            frame = execute(self._shell, self.code, self._live)
+        #
+        # Only `run_cell` is guarded inside `execute`; everything around it — the output, the log,
+        # the frame — can still raise: "Too many open files" when descriptors run out, or the
+        # KeyboardInterrupt of `interrupt()`, which lands at any bytecode, not only inside the cell.
+        # Formerly such an exception killed the thread before `_alive` was dropped: the cell stayed
+        # "running" for ever, and a signal had no thread to reach. Now any way out of the thread
+        # is the end of the cell.
+        frame = {}
+        code = 1
 
-        text = frame.get("stdout") or ""
-        if frame.get("result"):
-            text += ("\n" if text else "") + "=> " + frame["result"]
-        if frame.get("error"):
-            text += ("\n" if text else "") + frame["error"]
+        try:
+            with _kernel_lock:
+                frame = execute(self._shell, self.code, self._live)
 
-        self._absorb(text)
+            text = frame.get("stdout") or ""
+            if frame.get("result"):
+                text += ("\n" if text else "") + "=> " + frame["result"]
+            if frame.get("error"):
+                text += ("\n" if text else "") + frame["error"]
+
+            self._absorb(text)
+
+            # The return code: a cell with `%%bash` has its own, a real one, and it must be
+            # taken. An ordinary Python cell has no return code — then it is
+            # replaced by "fell over or not", otherwise the event about the end has nothing to say.
+            rc = getattr(_send_local, "rc", None)
+            code = 1 if frame.get("error") else (0 if rc is None else rc)
+        except KeyboardInterrupt:
+            code = -2
+        except BaseException:
+            log(f"cell {self.id} fell outside the cell:\n{traceback.format_exc()}")
+        finally:
+            with self._lock:
+                self._alive = False
+                self.exit_code = code
+                self.ended_at = time.time()
+                if not self._log.closed:
+                    self._log.close()
+
         with self._lock:
-            self._log.close()
-
-        # The return code: a cell with `%%bash` has its own, a real one, and it must be
-        # taken. An ordinary Python cell has no return code — then it is
-        # replaced by "fell over or not", otherwise the event about the end has nothing to say.
-        rc = getattr(_send_local, "rc", None)
-
-        with self._lock:
-            self._alive = False
-            self.exit_code = 1 if frame.get("error") else (0 if rc is None else rc)
-            self.ended_at = time.time()
             runtime = round(self.ended_at - self.started_at, 1)
             tail = self._tail
 
-        self._send(
-            {
-                "kind": "job",
-                "event": "finished",
-                "job": self.id,
-                "pid": self.pid,
-                "exit": self.exit_code,
-                "runtime_s": runtime,
-                "lines": self.lines,
-                "bytes": self.bytes_total,
-                "head": self.head(EVENT_HEAD),
-                "tail": tail,
-                "namespace": frame.get("namespace"),
-            }
-        )
+        try:
+            self._send(
+                {
+                    "kind": "job",
+                    "event": "finished",
+                    "job": self.id,
+                    "pid": self.pid,
+                    "exit": self.exit_code,
+                    "runtime_s": runtime,
+                    "lines": self.lines,
+                    "bytes": self.bytes_total,
+                    "head": self.head(EVENT_HEAD),
+                    "tail": tail,
+                    "namespace": frame.get("namespace"),
+                }
+            )
+        except BaseException:
+            log(f"cell {self.id}: the frame about the end did not go off:\n{traceback.format_exc()}")
 
     def _live(self, payload):
         """Live output of a cell. It has no request number: neither has a waiting one
