@@ -229,32 +229,32 @@ defmodule Sweet.SessionTest do
 
   # --- The time of the host in the prompt ---
 
-  # The same instant is printed twice: in UTC and in the clock of the host. The date in the second
-  # one comes out of the same arithmetic, and it is printed deliberately — east of UTC the day has
-  # already changed, and by hours alone the model would take the date of the UTC part.
+  # The same instant is printed twice: in the clock of the host first and in UTC in brackets. The date
+  # of the host comes out of the same arithmetic, and it is printed deliberately — east of UTC the day
+  # has already changed, and by hours alone the model would take the date of the UTC part.
   test "the brackets carry the offset and the time of the host" do
     utc = ~U[2026-09-23 17:34:00Z]
 
-    assert Sweet.Harness.Prompt.host_stamp(utc, 7 * 3600) == " (+07:00, host time 2026-09-24 00:34)"
+    assert Sweet.Harness.Prompt.host_stamp(utc, 7 * 3600) == "2026-09-24 00:34 (+07:00, UTC 2026-09-23 17:34)"
     # A negative offset is not a mirror of a positive one: the sign is common for the whole
     # offset, therefore the minutes do not turn into plus on the way.
-    assert Sweet.Harness.Prompt.host_stamp(utc, -(5 * 3600)) == " (-05:00, host time 2026-09-23 12:34)"
-    assert Sweet.Harness.Prompt.host_stamp(utc, 5 * 3600 + 45 * 60) == " (+05:45, host time 2026-09-23 23:19)"
+    assert Sweet.Harness.Prompt.host_stamp(utc, -(5 * 3600)) == "2026-09-23 12:34 (-05:00, UTC 2026-09-23 17:34)"
+    assert Sweet.Harness.Prompt.host_stamp(utc, 5 * 3600 + 45 * 60) == "2026-09-23 23:19 (+05:45, UTC 2026-09-23 17:34)"
     assert Sweet.Harness.Prompt.host_stamp(utc, -(7 * 3600 + 30 * 60)) ==
-             " (-07:30, host time 2026-09-23 10:04)"
+             "2026-09-23 10:04 (-07:30, UTC 2026-09-23 17:34)"
   end
 
   # The host stands in UTC — and this is knowledge, and not its absence: the brackets stay.
   test "a zero offset is still a known time of the host" do
     assert Sweet.Harness.Prompt.host_stamp(~U[2026-09-23 17:34:00Z], 0) ==
-             " (+00:00, host time 2026-09-23 17:34)"
+             "2026-09-23 17:34 (+00:00, UTC 2026-09-23 17:34)"
   end
 
-  # The daemon did not answer — the host time is unknown, and the line stays exactly as it was
-  # before: no brackets, no empty brackets, no `+00:00`. Both of those would be a lie of the same
+  # The daemon did not answer — the host time is unknown, and only UTC is printed, marked as UTC:
+  # no brackets, no empty brackets, no `+00:00`. Both of those would be a lie of the same
   # sort: they assert that the host stands in UTC.
   test "without an offset the host time is not printed at all" do
-    assert Sweet.Harness.Prompt.host_stamp(~U[2026-09-23 17:34:00Z], nil) == ""
+    assert Sweet.Harness.Prompt.host_stamp(~U[2026-09-23 17:34:00Z], nil) == "2026-09-23 17:34 UTC"
   end
 
   # The format of the daemon is a whole ISO-8601 stamp with the offset of the host on the tail, and

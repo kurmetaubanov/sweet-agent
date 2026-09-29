@@ -189,30 +189,31 @@ defmodule Sweet.Harness.Prompt do
     # boundary — and the line would say two different minutes about one and the same instant.
     utc = DateTime.from_unix!(System.os_time(:second))
 
-    "Now: #{stamp(utc)}#{host_stamp(utc, Sweet.HostTime.offset())}. This session: #{state.id}."
+    "Now: #{host_stamp(utc, Sweet.HostTime.offset())}. This session: #{state.id}."
   end
 
-  # The same instant in the clocks of the host, in brackets next to UTC. Both the offset and the time
-  # itself are there deliberately: by the offset alone one cannot check what the clock shows, and the
-  # offset gives what the date in the brackets does not — the DELTA from UTC, which is the same for
-  # every session and does not need to be recounted.
+  # The clock of the host comes first — it is the time the user lives in — and UTC in brackets
+  # after the offset. Both the offset and the UTC time are there deliberately: by the offset alone
+  # one cannot check what the clock shows, and the offset gives what the dates do not — the DELTA
+  # from UTC, which is the same for every session and does not need to be recounted.
   #
   # The DATE is printed too, and not only the hours: west of UTC the day is yesterday, east of it the
-  # next one, and the model that sees only the hours takes the date from the UTC part — and is wrong
-  # by a whole day.
+  # next one, and the model that sees only the hours takes the date from the wrong part — and is
+  # wrong by a whole day.
   #
-  # No offset — no brackets at all. Empty brackets or `+00:00` would be a lie: they assert that the
-  # host stands in UTC, while what they mean is that we do not know where it stands.
+  # No offset — UTC alone, marked as UTC. Printing it as the local time or with `+00:00` would be a
+  # lie: it asserts that the host stands in UTC, while what we mean is that we do not know where it stands.
   #
   # Open (`@doc false`) for the sake of checks: the function is pure, and there is nothing else
   # to check the branches with — the turn would have to raise docker and the model for the sake of
   # a line of text.
   @doc false
-  def host_stamp(_utc, nil), do: ""
+  def host_stamp(utc, nil), do: stamp(utc)
 
   def host_stamp(utc, offset) do
     shifted = DateTime.add(utc, offset, :second)
-    " (#{offset_stamp(offset)}, host time #{Calendar.strftime(shifted, "%Y-%m-%d %H:%M")})"
+
+    "#{Calendar.strftime(shifted, "%Y-%m-%d %H:%M")} (#{offset_stamp(offset)}, UTC #{Calendar.strftime(utc, "%Y-%m-%d %H:%M")})"
   end
 
   # `+07:00`, and not `25200`: the offset in seconds is read by nobody, while the hours and minutes
@@ -687,6 +688,7 @@ defmodule Sweet.Harness.Prompt do
     #{@text_output}
 
     #{@answer_language}
+    Use the user's local time when you talk to them.
     #{@long_running_work}
 
     How to run work that takes time — do this, not the loop:
