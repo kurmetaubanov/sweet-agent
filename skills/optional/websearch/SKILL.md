@@ -15,7 +15,7 @@ A plain file, run from the kernel:
 ```python
 import subprocess, sys
 r = subprocess.run(
-        ["timeout", "10", sys.executable, "/skills/websearch/search.py", "what to search for"],
+        ["timeout", "10", sys.executable, "/skills/optional/websearch/search.py", "what to search for"],
         capture_output=True, text=True)
 print(r.stdout)
 ```

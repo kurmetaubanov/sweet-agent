@@ -15,7 +15,7 @@ It is a plain file, run from the kernel:
 
 ```python
 import subprocess, sys
-r = subprocess.run([sys.executable, "/skills/webpage/page.py", url],
+r = subprocess.run([sys.executable, "/skills/optional/webpage/page.py", url],
                    capture_output=True, text=True)
 md = r.stdout
 ```

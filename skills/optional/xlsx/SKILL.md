@@ -299,7 +299,7 @@ Write tools. There are none here: the single tool is Python in a long-lived
 kernel. That means:
 
 - call the skill's scripts from the kernel, not from a shell:
-  `subprocess.run([sys.executable, "/skills/xlsx/scripts/NAME.py", ...], capture_output=True, text=True)`;
+  `subprocess.run([sys.executable, "/skills/optional/xlsx/scripts/NAME.py", ...], capture_output=True, text=True)`;
 - read and edit files with Python (`open`, `pathlib`), no Read/Write;
 - skip the advice about npm, npx and JavaScript libraries — there is no node in
   the container;

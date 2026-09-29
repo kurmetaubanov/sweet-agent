@@ -705,7 +705,7 @@ defmodule Sweet.Harness.Prompt do
     #{@picture_of_subject}
 
     Working directory: /workspace
-    Pre-installed Python packages: ipython, dill, numpy, scipy, pandas, matplotlib, scikit-learn, lightgbm, statsmodels, ruptures, psycopg2-binary, duckdb, pypdf, pdfminer.six, python-docx, python-pptx, openpyxl, Pillow, pylatexenc, requests, httpx, beautifulsoup4, lxml, torch (CPU), playwright.
+    Pre-installed Python packages: ipython, dill, numpy, scipy, pandas, matplotlib, scikit-learn, lightgbm, statsmodels, ruptures, psycopg2-binary, duckdb, pypdf, pdfminer.six, python-docx, python-pptx, openpyxl, Pillow, pylatexenc, requests, httpx, beautifulsoup4, lxml, torch (CPU), playwright (Chromium is already installed and found by default: call p.chromium.launch() as is, do not install browsers).
     Command-line tools: bash, git, curl, ripgrep, jq, sqlite3, tmux, poppler-utils, LibreOffice, docker CLI, uv.
     The docker CLI talks to a filtering proxy, not to the host daemon. Most commands work normally, including run, build, logs and ps. Four things are refused, and retrying will not help: `exec` in any container; `cp`, `stop`, `kill`, `restart`, `rm` and network attach/detach on the stack's own service containers; containers that break out of the sandbox (privileged, added capabilities, host namespaces, devices); and bind-mounting host paths outside the allowed list. Named volumes, tmpfs and --gpus are fine.
     Install additional packages with `pip install <pkg>` (installs into /workspace/.python and is importable straight away, in this turn and in later sessions).
