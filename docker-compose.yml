@@ -74,9 +74,13 @@ services:
       - sweet_hands     # here brain meets the hands and the embedder
       - sweet_ctl       # from here, and only from here, they go to docker-filter
       - sweet_world     # and here — outward, to the model and to Telegram
+    # The filter must be LISTENING, not merely started: brain goes to docker at once (the
+    # embedder), and on a cold start it got econnrefused, crashed and came up only by the restart.
     depends_on:
-      - docker-filter
-      - egress-filter
+      docker-filter:
+        condition: service_healthy
+      egress-filter:
+        condition: service_started
     # The last link of "let it crash": the node.
     #
     # Inside the tree everything falls and comes up by itself, but when `Sweet.Supervisor`
@@ -170,6 +174,12 @@ services:
     image: sweet-docker-filter:dev
     container_name: sweet-docker-filter
     restart: unless-stopped
+    # Healthy = the filter answers AND the daemon behind it answers: /_ping goes through both.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:2375/_ping', timeout=3)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
     labels:
       # The filter itself: to remove it would mean to lift all the prohibitions at once.
       sweet.protected: "true"

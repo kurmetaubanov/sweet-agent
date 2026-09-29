@@ -47,6 +47,9 @@ defmodule Sweet.Embed do
   # its container connects.
   @name "sweet-embedder"
 
+  # How many one-second tries to wait for docker-filter at boot (see boot_with_retry/1).
+  @boot_attempts 30
+
   # Registration is the only thing that cannot be postponed: the container will knock
   # itself, and by that moment we must be findable by name.
   #
@@ -64,7 +67,7 @@ defmodule Sweet.Embed do
     Task.Supervisor.start_child(Sweet.Tasks, fn ->
       Sweet.Hand.Docker.remove(@name)
 
-      case boot_docker() do
+      case boot_with_retry(@boot_attempts) do
         {:ok, container} -> send(embed, {:booted, container})
         {:error, reason} -> send(embed, {:boot_failed, reason})
       end
@@ -74,6 +77,21 @@ defmodule Sweet.Embed do
     Process.send_after(self(), :boot_timeout, Application.fetch_env!(:sweet, :embed_timeout_ms))
 
     {:noreply, state}
+  end
+
+  # Docker is reached through the filter, and on a cold start of the stack the filter may not be
+  # listening yet: the refused connection is a "not yet", not a failure. It is waited out here,
+  # a second at a time; any other error, and the last refusal, go to the supervisor as before.
+  defp boot_with_retry(attempts) do
+    case boot_docker() do
+      {:error, %Mint.TransportError{reason: :econnrefused}} when attempts > 1 ->
+        Logger.info("embedder: docker-filter is not listening yet, retrying")
+        Process.sleep(1000)
+        boot_with_retry(attempts - 1)
+
+      other ->
+        other
+    end
   end
 
   # Prod: its own container with its own memory limit. This is not about the isolation of code —
