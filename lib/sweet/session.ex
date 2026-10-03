@@ -547,7 +547,7 @@ defmodule Sweet.Session do
       state
       | task: nil,
         subscriber: nil,
-        history: history,
+        history: drop_pictures(history),
         turns: state.turns + turns,
         usage: total,
         turn_started: nil
@@ -1656,9 +1656,20 @@ waiting for input: " <> Enum.join(names, ", ")
       | task: task,
         subscriber: subscriber,
         watcher: subscriber || state.watcher,
-        history: history,
+        history: drop_pictures(history),
         turn_started: started
     }
+  end
+
+  # The picture lives only inside its turn: the session keeps the text with the path, not the bytes.
+  defp drop_pictures(history) do
+    Enum.map(history, fn
+      %{content: blocks} = message when is_list(blocks) ->
+        %{message | content: Enum.reject(blocks, &(is_map(&1) and Map.get(&1, "type") == "image"))}
+
+      message ->
+        message
+    end)
   end
 
   # The common part of the two paths into the mailbox — the words of the person and a file sent by

@@ -34,9 +34,9 @@ defmodule Sweet.Files do
     ".webp" => "image/webp"
   }
 
-  # The ceiling of the API on a picture in base64 is 10 MB, while base64 adds a third to the
-  # file — hence the ceiling on the file itself.
-  @max_image_bytes 7_000_000
+  # The Anthropic API takes up to 5 MB per picture; a heavier file stays in inbox and is opened
+  # with a tool.
+  @max_image_bytes 5_000_000
 
   # The Telegram limit for bots.
   @max_bytes 50 * 1024 * 1024
