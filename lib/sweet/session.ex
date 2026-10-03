@@ -216,7 +216,9 @@ defmodule Sweet.Session do
        # Whom the session owes a hand event: the name of the hand -> a function. The subscription lives
        # in the connection, but to forget it is the session's duty — otherwise after a long
        # silence the event will again turn out to be “nobody's”.
-       job_events: []
+       job_events: [],
+       # Pictures of the current turn, see `start_turn`.
+       pictures: []
      }, {:continue, :open}}
   end
 
