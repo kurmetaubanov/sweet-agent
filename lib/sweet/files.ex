@@ -19,7 +19,25 @@ defmodule Sweet.Files do
 
   require Logger
 
+  # What Telegram shows in the chat as a picture. This is NOT the same as what the model can be
+  # given as a picture: an animated gif must go as a document, otherwise the person gets
+  # a still frame instead of the animation.
   @image_exts ~w(.png .jpg .jpeg .webp)
+
+  # What the model can be given as a picture — the media types of the Anthropic API. The type is
+  # taken from here and is not guessed by the bytes: the API demands it in the block itself.
+  @media_types %{
+    ".png" => "image/png",
+    ".jpg" => "image/jpeg",
+    ".jpeg" => "image/jpeg",
+    ".gif" => "image/gif",
+    ".webp" => "image/webp"
+  }
+
+  # The ceiling of the API on a picture in base64 is 10 MB, while base64 adds a third to the
+  # file — hence the ceiling on the file itself.
+  @max_image_bytes 7_000_000
+
   # The Telegram limit for bots.
   @max_bytes 50 * 1024 * 1024
   # So that one turn does not arrange an avalanche of a hundred files.
@@ -81,6 +99,38 @@ defmodule Sweet.Files do
 
   @doc "Telegram shows a picture in the chat, gives the rest as a file."
   def image?(path), do: Path.extname(path) |> String.downcase() |> then(&(&1 in @image_exts))
+
+  @doc "The type of a picture by the extension; `nil` for everything else."
+  def media_type(path), do: @media_types[path |> Path.extname() |> String.downcase()]
+
+  @doc "Whether the model can be given the file as a picture."
+  def picture?(path), do: media_type(path) != nil
+
+  @doc """
+  A picture as a block of the request to the model.
+
+  The file is read WHOLE and put into base64: the picture must reach the model as bytes, and
+  the path in the text alone does not put it there — the model does not open files.
+
+  `nil` — the file is not a picture, or it is too heavy for the API. The caller then manages
+  without the picture: the file itself lies in inbox, and the agent will open it in the usual way.
+  """
+  def image_block(path) do
+    with media_type when not is_nil(media_type) <- media_type(path),
+         {:ok, binary} <- File.read(path),
+         true <- byte_size(binary) <= @max_image_bytes do
+      %{
+        "type" => "image",
+        "source" => %{
+          "type" => "base64",
+          "media_type" => media_type,
+          "data" => Base.encode64(binary)
+        }
+      }
+    else
+      _ -> nil
+    end
+  end
 
   @doc """
   A safe name for a sent file.

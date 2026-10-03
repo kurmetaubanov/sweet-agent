@@ -53,7 +53,8 @@ defmodule Sweet.Telegram.Chat do
   def flush_outbox(chat_id), do: cast(chat_id, :flush_outbox)
 
   @doc "Take a sent file into inbox and say where it landed."
-  def fetch(chat_id, file_id, name), do: cast(chat_id, {:fetch, file_id, name})
+  def fetch(chat_id, file_id, name, caption \\ nil),
+    do: cast(chat_id, {:fetch, file_id, name, caption})
 
   @doc """
   Confirm a press of a button: without this it "spins" at the person until the
@@ -174,8 +175,14 @@ defmodule Sweet.Telegram.Chat do
     {:noreply, state}
   end
 
-  def handle_cast({:fetch, file_id, name}, state) do
-    Telegram.fetch_to_inbox(state.chat_id, file_id, name)
+  # The download is here — it is a trip onto the network, and the bridge is one for all chats.
+  # The turn itself is asked of the bridge: the session lives there, and not here.
+  def handle_cast({:fetch, file_id, name, caption}, state) do
+    case Telegram.fetch_to_inbox(state.chat_id, file_id, name) do
+      {:ok, path} -> Telegram.file_received(state.chat_id, path, caption)
+      {:error, _reason} -> :ok
+    end
+
     {:noreply, state}
   end
 

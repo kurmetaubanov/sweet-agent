@@ -411,6 +411,21 @@ defmodule Sweet.Telegram do
     end
   end
 
+  # A picture (or any other file) has already landed in inbox — the chat process took it there.
+  # Here the session is found and a turn is started with it.
+  @impl true
+  def handle_cast({:file_received, chat_id, path, caption}, state) do
+    {session, state} = ensure_session(chat_id, state)
+    text = file_text(path, caption)
+
+    # The topic for the inventory is deferred the same way as for a text: from the caption, and
+    # failing that from the fact that a file arrived.
+    state = %{state | titles: Map.put(state.titles, session, caption || text)}
+
+    Sweet.Session.ask_file(session, path, text, self())
+    {:noreply, state}
+  end
+
   @impl true
   def handle_cast({:incoming, %{"message" => %{"from" => %{"id" => user_id}} = message}}, state)
       when is_integer(user_id) do
@@ -514,16 +529,29 @@ defmodule Sweet.Telegram do
 
   # We put the sent file into inbox and say where it landed: for the agent this is the path
   # by which it will open it, for the person — a confirmation that it arrived.
-  defp handle_message(%{"chat" => %{"id" => chat_id}, "document" => document}, state) do
-    Chat.fetch(chat_id, document["file_id"], Sweet.Files.safe_name(document["file_name"]))
+  defp handle_message(%{"chat" => %{"id" => chat_id}, "document" => document} = message, state) do
+    Chat.fetch(
+      chat_id,
+      document["file_id"],
+      Sweet.Files.safe_name(document["file_name"]),
+      message["caption"]
+    )
+
     {:noreply, state}
   end
 
-  defp handle_message(%{"chat" => %{"id" => chat_id}, "photo" => photos}, state)
+  defp handle_message(%{"chat" => %{"id" => chat_id}, "photo" => photos} = message, state)
        when is_list(photos) and photos != [] do
     # Telegram sends a ladder of sizes; the last is the largest.
     photo = List.last(photos)
-    Chat.fetch(chat_id, photo["file_id"], "photo_#{photo["file_unique_id"]}.jpg")
+
+    Chat.fetch(
+      chat_id,
+      photo["file_id"],
+      "photo_#{photo["file_unique_id"]}.jpg",
+      message["caption"]
+    )
+
     {:noreply, state}
   end
 
@@ -549,7 +577,12 @@ defmodule Sweet.Telegram do
 
   defp rich_strings(_), do: []
 
-  @doc "Fetch the sent file into inbox. Called from the chat process."
+  @doc """
+  Fetch the sent file into inbox. Called from the chat process.
+
+  The path of the file that landed is returned to the caller: from there the chat process asks for a
+  turn with the picture (see `file_received/3`).
+  """
   def fetch_to_inbox(chat_id, file_id, name) do
     Sweet.Files.ensure()
     path = Path.join(Sweet.Files.inbox(), name)
@@ -558,10 +591,36 @@ defmodule Sweet.Telegram do
       {:ok, binary} ->
         File.write!(path, binary)
         send_message(chat_id, "Received: #{path}")
+        {:ok, path}
 
       {:error, reason} ->
         Logger.warning("the file #{file_id} did not download: #{inspect(reason)}")
         send_message(chat_id, "The file did not download: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  A file sent into the chat has landed in inbox. Called from the chat process.
+
+  A sent file is a word of the person like any other, and it deserves a turn: the bridge only finds
+  the session and hands the file over, exactly as it does with a text. Before this the file was
+  taken into inbox and that was the end of it — the model learned about the picture only if the
+  person wrote something afterwards.
+  """
+  def file_received(chat_id, path, caption \\ nil) do
+    GenServer.cast(__MODULE__, {:file_received, chat_id, path, caption})
+  end
+
+  # The headline of the event — the same role as the text of a question: from it the topic of the
+  # session is counted, and by it the memory is raised.
+  defp file_text(path, caption) do
+    what = if Sweet.Files.picture?(path), do: "a picture", else: "a file"
+    base = "The person sent #{what}: #{path}."
+
+    case caption do
+      caption when is_binary(caption) and caption != "" -> base <> " The caption: " <> caption
+      _ -> base
     end
   end
 

@@ -85,7 +85,25 @@ defmodule Sweet.Harness.Prompt do
 
     log(found)
 
-    [%{"role" => "user", "content" => compose(state, found, tail, question)}]
+    [%{"role" => "user", "content" => content(state, found, tail, question)}]
+  end
+
+  # The first message of a turn. As long as there are no pictures it is a string — the way the
+  # whole prompt has always travelled. With pictures it is a LIST of blocks: the picture reaches
+  # the model only as a block of the request, and the path to the file in the text does not put
+  # it there (see `Sweet.Files.image_block/1`).
+  #
+  # The text goes FIRST, and the pictures after it: the model reads the question before looking at
+  # the picture, otherwise the first thing it sees is an unnamed picture.
+  defp content(state, found, tail, question) do
+    text = compose(state, found, tail, question)
+    pictures = Map.get(state, :pictures, [])
+
+    if pictures == [] do
+      text
+    else
+      [%{"type" => "text", "text" => text} | pictures]
+    end
   end
 
   # The query to the memory: the window of the conversation together with the question. A bare
@@ -728,7 +746,7 @@ defmodule Sweet.Harness.Prompt do
 
     Python state in the kernel, by contrast, persists across cells: named variables, helper functions, classes, imports, notes, parsed outputs, and helper data structures all remain available in every later turn. Tool calls are themselves Python `await` expressions, so their return values can be bound to variables and composed into program logic just like any other call.
 
-    Files are exchanged with the human through folders, there is no separate tool: what he sends you lands in /workspace/exchange/inbox, and whatever you put into /workspace/exchange/outbox is delivered to him after the turn. Images are shown inline, everything else arrives as a file. No other exchange folder exists — do not invent /data/outbox and the like. Do not put working drafts into outbox, only what the human actually needs.
+    Files are exchanged with the human through folders, there is no separate tool: what he sends you lands in /workspace/exchange/inbox, and whatever you put into /workspace/exchange/outbox is delivered to him after the turn. A picture arrives as a picture and you see it; any other file arrives as a path, and you open it with your tools. The file itself lies in inbox under that path in both cases. No other exchange folder exists — do not invent /data/outbox and the like. Do not put working drafts into outbox, only what the human actually needs.
 
     Delegate parallel context-heavy research or independent implementation; do a single known lookup, edit, or command inline.
 

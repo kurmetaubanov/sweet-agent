@@ -315,6 +315,60 @@ defmodule Sweet.SessionTest do
     refute Enum.any?(Sweet.Recall.history(id), &(&1.text =~ "only after unambiguous, strict leave"))
   end
 
+  # A sent file goes into the mailbox as ONE entry: the text with the path and, for a picture,
+  # the picture itself. To part them would mean to show the model a picture without the trace
+  # by which the agent will find the file again.
+  #
+  # A turn stands here, and not the network: the mailbox lives in the session, while the turn
+  # walks away with its own copy of the state (see `fake_turn/2`).
+  test "a picture sent into the chat lies down as a text block and a picture block", %{session: session} do
+    path = Path.join(System.tmp_dir!(), "sweet-turn-#{System.unique_integer([:positive])}.png")
+    File.write!(path, <<137, 80, 78, 71>>)
+    on_exit(fn -> File.rm(path) end)
+
+    fake_turn(session, nil)
+    Sweet.Session.ask_file(session, path, "The person sent a picture: #{path}.")
+
+    blocks = GenServer.call(session, :take_inbox)
+
+    assert [%{"type" => "text"} = text, %{"type" => "image"} = picture, %{"text" => "end of inbox"}] = blocks
+    assert text["text"] =~ path
+    assert picture["source"]["media_type"] == "image/png"
+  end
+
+  # A document that is not a picture travels as text alone: there is no block for it, and the
+  # message must not fall because of that. The agent will open the file with its tools.
+  test "a file that is not a picture gives a single text block", %{session: session} do
+    path = Path.join(System.tmp_dir!(), "sweet-turn-#{System.unique_integer([:positive])}.pdf")
+    File.write!(path, "%PDF-1.4")
+    on_exit(fn -> File.rm(path) end)
+
+    fake_turn(session, nil)
+    Sweet.Session.ask_file(session, path, "The person sent a file: #{path}.")
+
+    blocks = GenServer.call(session, :take_inbox)
+
+    assert [%{"type" => "text"}, %{"text" => "end of inbox"}] = blocks
+    assert Enum.count(blocks, &(&1["type"] == "image")) == 0
+  end
+
+  test "the first message of a turn becomes a list of blocks when pictures are there", %{id: id} do
+    # Without pictures the message is a string, as before: the whole prompt has always travelled
+    # that way, and there is no reason to change the shape for the sake of an empty list.
+    [%{"role" => "user", "content" => text}] =
+      Sweet.Harness.Prompt.build(%{id: id, pictures: []}, "what is on the picture?")
+
+    assert is_binary(text)
+
+    picture = %{"type" => "image", "source" => %{"type" => "base64", "media_type" => "image/png", "data" => "AA=="}}
+
+    [%{"role" => "user", "content" => blocks}] =
+      Sweet.Harness.Prompt.build(%{id: id, pictures: [picture]}, "what is on the picture?")
+
+    assert [%{"type" => "text"} = text_block, ^picture] = blocks
+    assert text_block["text"] =~ "what is on the picture?"
+  end
+
   test "the account of a job survives the task that started it", %{session: session, id: id} do
     # This is the check of that very breakage: the job is started in a SEPARATE
     # task — exactly as in `run_tool/3` — and after its death the session must

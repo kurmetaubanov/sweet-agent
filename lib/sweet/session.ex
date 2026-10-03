@@ -77,6 +77,19 @@ defmodule Sweet.Session do
   end
 
   @doc """
+  Take a file sent into the chat and start a turn with it.
+
+  `text` is what goes into the memory and into the window: the picture does not remain in the memory
+  as a picture, and the path in the text is the only trace by which the agent will find the file
+  later. The picture itself travels as a block of the request and reaches the model as bytes
+  (see `Sweet.Files.image_block/1`); a file that is not a picture, or one too heavy for the API,
+  gives the text alone — the agent will open it with its tools as before.
+  """
+  def ask_file(pid, path, text, subscriber \\ self()) do
+    GenServer.cast(pid, {:ask_file, path, text, subscriber})
+  end
+
+  @doc """
   A forced stop. Kills the task of the turn and the hand together with the executing
   code; the waiter receives `{:sweet_done, session, {:error, :cancelled}}`.
 
@@ -230,15 +243,15 @@ defmodule Sweet.Session do
   # needed and is harmful: the cell now runs as a background job, and to interrupt
   # ordered work with it there is no reason — the boundary of a round comes by itself.
   def handle_cast({:ask, text, subscriber}, state) do
-    state = put_inbox(state, text, %{"type" => "text", "text" => text})
-    state = %{state | watcher: subscriber}
+    {:noreply, deliver(state, text, %{"type" => "text", "text" => text}, subscriber)}
+  end
 
-    if state.task do
-      send(subscriber, {:sweet_steer, self(), text})
-      {:noreply, %{state | subscriber: subscriber}}
-    else
-      {:noreply, start_turn(state, subscriber)}
-    end
+  # A picture (or, more often, a document) sent into the chat. The text and the picture go into the
+  # mailbox as ONE entry: they are about one and the same thing, and to part them would mean to
+  # show the model a picture without the trace by which it will be found later.
+  def handle_cast({:ask_file, path, text, subscriber}, state) do
+    blocks = [%{"type" => "text", "text" => text}] ++ List.wrap(Sweet.Files.image_block(path))
+    {:noreply, deliver(state, text, blocks, subscriber)}
   end
 
   # The hand is alive as a process, but unfit: its connection (and with it the container) is dead,
@@ -1428,7 +1441,9 @@ waiting for input: " <> Enum.join(names, ", ")
       case state.inbox do
         [] -> []
         inbox ->
-          Enum.map(inbox, & &1.block) ++
+          # `flat_map` and not `map`: a picture entry carries two blocks at once — the text and
+          # the picture itself.
+          Enum.flat_map(inbox, &List.wrap(&1.block)) ++
             [%{"type" => "text", "text" => "end of inbox" <> running <> asking}]
       end
 
@@ -1611,7 +1626,16 @@ waiting for input: " <> Enum.join(names, ", ")
     history = state.history ++ [%{role: "user", content: blocks}]
     session = self()
 
-    turn_state = %{state | history: history, usage: %{input: 0, output: 0}, turns: 0}
+    # The pictures of this turn are picked out of the blocks: the blocks go into the history, while
+    # the picture must still reach the REQUEST, and the request is assembled anew on every turn —
+    # out of the memory and the question, and not out of the history (see `Sweet.Harness.Prompt`).
+    #
+    # They are carried by the state of the TURN, and not by the session's: the turn counts only
+    # itself, and after it is accepted the picture is needed by nobody.
+    pictures = Enum.filter(blocks, &(&1["type"] == "image"))
+
+    turn_state =
+      %{state | history: history, usage: %{input: 0, output: 0}, turns: 0, pictures: pictures}
     started = System.monotonic_time(:millisecond)
 
     # Under a supervisor and WITHOUT a link. Formerly `Task.async` stood here, and it links:
@@ -1633,6 +1657,20 @@ waiting for input: " <> Enum.join(names, ", ")
         history: history,
         turn_started: started
     }
+  end
+
+  # The common part of the two paths into the mailbox — the words of the person and a file sent by
+  # it: into the mailbox, and then either a turn at once or a step of the turn that is going.
+  defp deliver(state, text, block, subscriber) do
+    state = put_inbox(state, text, block)
+    state = %{state | watcher: subscriber}
+
+    if state.task do
+      send(subscriber, {:sweet_steer, self(), text})
+      %{state | subscriber: subscriber}
+    else
+      start_turn(state, subscriber)
+    end
   end
 
   # The headline of the event is what is for the person and the memory. One for all three kinds, for
